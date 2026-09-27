@@ -1,7 +1,7 @@
 from django.http import JsonResponse
 
-from budgets.views import budgets
-from expenses.views import expenses
+from budgets.models import Budget
+from expenses.models import Expense
 
 
 def budget_alert(request):
@@ -33,35 +33,43 @@ def budget_alert(request):
             "message": "event_id must be greater than 0"
         }, status=400)
 
-    # Find budget for this event
-    selected_budget = None
-
-    for budget in budgets:
-        if budget["event_id"] == event_id:
-            selected_budget = budget
-            break
-
-    if selected_budget is None:
+    # Find budget from database
+    try:
+        budget = Budget.objects.get(
+            event_id=event_id
+        )
+    except Budget.DoesNotExist:
         return JsonResponse({
             "message": "Budget not found for this event"
         }, status=404)
 
     # Get total budget
-    total_budget = float(selected_budget["total_budget"])
+    total_budget = float(
+        budget.total_budget
+    )
 
-    # Calculate total expenses
+    # Get expenses from database
+    expenses = Expense.objects.filter(
+        event_id=event_id
+    )
+
     total_expenses = 0
 
     for expense in expenses:
-        if expense["event_id"] == event_id:
-            total_expenses += float(expense["amount"])
+        total_expenses += float(
+            expense.amount
+        )
 
     # Calculate remaining budget
-    remaining_budget = total_budget - total_expenses
+    remaining_budget = (
+        total_budget - total_expenses
+    )
 
-    # Calculate utilization percentage
+    # Calculate utilization
     if total_budget > 0:
-        utilization = (total_expenses / total_budget) * 100
+        utilization = (
+            total_expenses / total_budget
+        ) * 100
     else:
         utilization = 0
 
@@ -86,13 +94,23 @@ def budget_alert(request):
         alert = "Budget Within Limit"
         severity = "Normal"
 
-    # Return result
+    # Return response
     return JsonResponse({
+
         "event_id": event_id,
+
         "total_budget": total_budget,
+
         "total_expenses": total_expenses,
+
         "remaining_budget": remaining_budget,
-        "budget_utilization_percentage": round(utilization, 2),
+
+        "budget_utilization_percentage": round(
+            utilization,
+            2
+        ),
+
         "alert": alert,
+
         "severity": severity
     })

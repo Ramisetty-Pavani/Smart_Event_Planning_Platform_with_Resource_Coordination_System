@@ -1,352 +1,286 @@
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
+
 import json
 
-from expenses.views import expenses
+from .models import Budget
+from expenses.models import Expense
 from notifications.views import create_notification
-
-
-budgets = []
 
 
 @csrf_exempt
 def budget_list(request):
 
-    # =========================================================
-    # GET - Get all budgets
-    # =========================================================
-
+    # =========================
+    # GET - View all budgets
+    # =========================
     if request.method == "GET":
+
+        budgets = Budget.objects.all()
+
+        budget_data = []
+
+        for budget in budgets:
+            budget_data.append({
+                "id": budget.id,
+                "event_id": budget.event_id,
+                "total_budget": float(budget.total_budget)
+            })
 
         return JsonResponse({
             "message": "Budgets retrieved successfully",
-            "budgets": budgets
+            "budgets": budget_data
         })
 
-
-    # =========================================================
+    # =========================
     # POST - Create budget
-    # =========================================================
-
+    # =========================
     elif request.method == "POST":
 
         try:
             data = json.loads(request.body)
-
         except json.JSONDecodeError:
-
             return JsonResponse({
                 "message": "Invalid JSON data"
             }, status=400)
-
 
         event_id = data.get("event_id")
         total_budget = data.get("total_budget")
 
-
         # Validate event_id
-
         if event_id is None:
-
             return JsonResponse({
                 "message": "event_id is required"
             }, status=400)
 
-
         try:
             event_id = int(event_id)
-
         except (ValueError, TypeError):
-
             return JsonResponse({
                 "message": "event_id must be a valid number"
             }, status=400)
 
-
         if event_id <= 0:
-
             return JsonResponse({
                 "message": "event_id must be greater than 0"
             }, status=400)
 
-
         # Validate budget
-
         if total_budget is None:
-
             return JsonResponse({
                 "message": "total_budget is required"
             }, status=400)
 
-
         try:
             total_budget = float(total_budget)
-
         except (ValueError, TypeError):
-
             return JsonResponse({
                 "message": "total_budget must be a valid number"
             }, status=400)
 
-
         if total_budget <= 0:
-
             return JsonResponse({
                 "message": "total_budget must be greater than 0"
             }, status=400)
 
-
         # Check whether budget already exists
+        existing_budget = Budget.objects.filter(
+            event_id=event_id
+        ).first()
 
-        for budget in budgets:
-
-            if budget["event_id"] == event_id:
-
-                return JsonResponse({
-                    "message": "Budget already exists for this event"
-                }, status=400)
-
+        if existing_budget:
+            return JsonResponse({
+                "message": "Budget already exists for this event"
+            }, status=400)
 
         # Create budget
-
-        budget = {
-            "id": len(budgets) + 1,
-            "event_id": event_id,
-            "total_budget": total_budget
-        }
-
-
-        budgets.append(budget)
-
+        budget = Budget.objects.create(
+            event_id=event_id,
+            total_budget=total_budget
+        )
 
         return JsonResponse({
             "message": "Budget created successfully",
-            "budget": budget
+            "budget": {
+                "id": budget.id,
+                "event_id": budget.event_id,
+                "total_budget": float(budget.total_budget)
+            }
         }, status=201)
 
-
-    # =========================================================
+    # =========================
     # PUT - Update budget
-    # =========================================================
-
+    # =========================
     elif request.method == "PUT":
 
         try:
             data = json.loads(request.body)
-
         except json.JSONDecodeError:
-
             return JsonResponse({
                 "message": "Invalid JSON data"
             }, status=400)
 
-
         budget_id = data.get("id")
 
-
         if budget_id is None:
-
             return JsonResponse({
                 "message": "Budget id is required"
             }, status=400)
 
-
         try:
             budget_id = int(budget_id)
-
         except (ValueError, TypeError):
-
             return JsonResponse({
                 "message": "Budget id must be a valid number"
             }, status=400)
 
+        try:
+            budget = Budget.objects.get(
+                id=budget_id
+            )
+        except Budget.DoesNotExist:
+            return JsonResponse({
+                "message": "Budget not found"
+            }, status=404)
 
-        for budget in budgets:
+        # Update event_id
+        if "event_id" in data:
 
-            if budget["id"] == budget_id:
-
-                # Update event_id
-
-                if "event_id" in data:
-
-                    try:
-                        new_event_id = int(data["event_id"])
-
-                    except (ValueError, TypeError):
-
-                        return JsonResponse({
-                            "message": "event_id must be a valid number"
-                        }, status=400)
-
-
-                    if new_event_id <= 0:
-
-                        return JsonResponse({
-                            "message": "event_id must be greater than 0"
-                        }, status=400)
-
-
-                    budget["event_id"] = new_event_id
-
-
-                # Update total budget
-
-                if "total_budget" in data:
-
-                    try:
-                        new_budget = float(data["total_budget"])
-
-                    except (ValueError, TypeError):
-
-                        return JsonResponse({
-                            "message": "total_budget must be a valid number"
-                        }, status=400)
-
-
-                    if new_budget <= 0:
-
-                        return JsonResponse({
-                            "message": "total_budget must be greater than 0"
-                        }, status=400)
-
-
-                    budget["total_budget"] = new_budget
-
-
+            try:
+                new_event_id = int(data["event_id"])
+            except (ValueError, TypeError):
                 return JsonResponse({
-                    "message": "Budget updated successfully",
-                    "budget": budget
-                })
+                    "message": "event_id must be a valid number"
+                }, status=400)
 
+            if new_event_id <= 0:
+                return JsonResponse({
+                    "message": "event_id must be greater than 0"
+                }, status=400)
+
+            budget.event_id = new_event_id
+
+        # Update total budget
+        if "total_budget" in data:
+
+            try:
+                new_budget = float(
+                    data["total_budget"]
+                )
+            except (ValueError, TypeError):
+                return JsonResponse({
+                    "message": "total_budget must be a valid number"
+                }, status=400)
+
+            if new_budget <= 0:
+                return JsonResponse({
+                    "message": "total_budget must be greater than 0"
+                }, status=400)
+
+            budget.total_budget = new_budget
+
+        budget.save()
 
         return JsonResponse({
-            "message": "Budget not found"
-        }, status=404)
+            "message": "Budget updated successfully",
+            "budget": {
+                "id": budget.id,
+                "event_id": budget.event_id,
+                "total_budget": float(
+                    budget.total_budget
+                )
+            }
+        })
 
-
-    # =========================================================
+    # =========================
     # DELETE - Delete budget
-    # =========================================================
-
+    # =========================
     elif request.method == "DELETE":
 
         try:
             data = json.loads(request.body)
-
         except json.JSONDecodeError:
-
             return JsonResponse({
                 "message": "Invalid JSON data"
             }, status=400)
 
-
         budget_id = data.get("id")
 
-
         if budget_id is None:
-
             return JsonResponse({
                 "message": "Budget id is required"
             }, status=400)
 
-
         try:
             budget_id = int(budget_id)
-
         except (ValueError, TypeError):
-
             return JsonResponse({
                 "message": "Budget id must be a valid number"
             }, status=400)
 
+        try:
+            budget = Budget.objects.get(
+                id=budget_id
+            )
+        except Budget.DoesNotExist:
+            return JsonResponse({
+                "message": "Budget not found"
+            }, status=404)
 
-        for budget in budgets:
-
-            if budget["id"] == budget_id:
-
-                budgets.remove(budget)
-
-                return JsonResponse({
-                    "message": "Budget deleted successfully"
-                })
-
+        budget.delete()
 
         return JsonResponse({
-            "message": "Budget not found"
-        }, status=404)
-
+            "message": "Budget deleted successfully"
+        })
 
     return JsonResponse({
         "message": "Method not allowed"
     }, status=405)
 
 
-# =============================================================
+# ============================================================
 # BUDGET SUMMARY
-# =============================================================
+# ============================================================
 
 def budget_summary(request, event_id):
 
-    # Find budget
-
-    selected_budget = None
-
-    for budget in budgets:
-
-        if budget["event_id"] == event_id:
-
-            selected_budget = budget
-            break
-
-
-    if selected_budget is None:
-
+    try:
+        budget = Budget.objects.get(
+            event_id=event_id
+        )
+    except Budget.DoesNotExist:
         return JsonResponse({
             "message": "Budget not found for this event"
         }, status=404)
 
-
     total_budget = float(
-        selected_budget["total_budget"]
+        budget.total_budget
     )
 
-
-    # Calculate total expenses
+    # Get expenses from database
+    expenses = Expense.objects.filter(
+        event_id=event_id
+    )
 
     total_expenses = 0
 
-
     for expense in expenses:
+        total_expenses += float(
+            expense.amount
+        )
 
-        if expense["event_id"] == event_id:
-
-            total_expenses += float(
-                expense["amount"]
-            )
-
-
-    # Calculate remaining budget
-
-    remaining_budget = total_budget - total_expenses
-
-
-    # Calculate utilization
+    remaining_budget = (
+        total_budget - total_expenses
+    )
 
     if total_budget > 0:
-
         utilization = (
             total_expenses / total_budget
         ) * 100
-
     else:
-
         utilization = 0
 
-
-    # =========================================================
-    # BUDGET ALERT + AUTOMATIC NOTIFICATION
-    # =========================================================
-
+    # Determine budget status
     if total_expenses > total_budget:
 
         status = "Budget Exceeded"
@@ -357,7 +291,6 @@ def budget_summary(request, event_id):
             "Budget exceeded for event "
             + str(event_id)
         )
-
 
     elif utilization >= 90:
 
@@ -370,13 +303,9 @@ def budget_summary(request, event_id):
             + str(event_id)
         )
 
-
     else:
 
         status = "Within Budget"
-
-
-    # Return summary
 
     return JsonResponse({
 
