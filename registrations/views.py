@@ -4,38 +4,27 @@ from django.views.decorators.csrf import csrf_exempt
 import json
 import re
 
-from events.models import Event
 from .models import Registration
+from events.models import Event
 from notifications.views import create_notification
-
-
-ALLOWED_STATUS = [
-    "Registered",
-    "Confirmed",
-    "Cancelled"
-]
-
-ALLOWED_ATTENDANCE = [
-    "Not Marked",
-    "Present",
-    "Absent"
-]
 
 
 @csrf_exempt
 def registration_list(request):
 
+    # =========================
+    # GET - VIEW REGISTRATIONS
+    # =========================
     if request.method == "GET":
 
         event_id = request.GET.get("event_id")
 
-        if event_id is not None:
-
+        if event_id:
             try:
                 event_id = int(event_id)
             except (ValueError, TypeError):
                 return JsonResponse({
-                    "message": "event_id must be a valid number"
+                    "message": "Event id must be a valid number"
                 }, status=400)
 
             registrations = Registration.objects.filter(
@@ -43,13 +32,12 @@ def registration_list(request):
             ).order_by("-id")
 
         else:
-
             registrations = Registration.objects.all().order_by("-id")
 
-        result = []
+        registration_data = []
 
         for registration in registrations:
-            result.append({
+            registration_data.append({
                 "id": registration.id,
                 "event_id": registration.event_id,
                 "name": registration.name,
@@ -61,13 +49,18 @@ def registration_list(request):
 
         return JsonResponse({
             "message": "Registrations retrieved successfully",
-            "registrations": result
+            "registrations": registration_data
         })
 
+
+    # =========================
+    # POST - NEW REGISTRATION
+    # =========================
     elif request.method == "POST":
 
         try:
             data = json.loads(request.body)
+
         except json.JSONDecodeError:
             return JsonResponse({
                 "message": "Invalid JSON data"
@@ -78,9 +71,10 @@ def registration_list(request):
         email = data.get("email")
         phone = data.get("phone")
 
+        # Required fields
         if event_id is None:
             return JsonResponse({
-                "message": "event_id is required"
+                "message": "Event id is required"
             }, status=400)
 
         if not name or not name.strip():
@@ -95,45 +89,59 @@ def registration_list(request):
 
         if not phone:
             return JsonResponse({
-                "message": "Phone is required"
+                "message": "Phone number is required"
             }, status=400)
 
+        # Event ID validation
         try:
             event_id = int(event_id)
+
         except (ValueError, TypeError):
             return JsonResponse({
-                "message": "event_id must be a valid number"
+                "message": "Event id must be a valid number"
             }, status=400)
 
         if event_id <= 0:
             return JsonResponse({
-                "message": "event_id must be greater than 0"
+                "message": "Event id must be greater than 0"
             }, status=400)
 
+        # Check event
         try:
-            event = Event.objects.get(
-                id=event_id
-            )
+            event = Event.objects.get(id=event_id)
+
         except Event.DoesNotExist:
             return JsonResponse({
                 "message": "Event not found"
             }, status=404)
 
+        # Normalize email
         email = email.strip().lower()
 
-        email_pattern = r"^[\w\.-]+@[\w\.-]+\.\w+$"
+        # Email validation
+        email_pattern = r"^[^\s@]+@[^\s@]+\.[^\s@]+$"
 
         if not re.match(email_pattern, email):
             return JsonResponse({
-                "message": "Invalid email format"
+                "message": "Invalid email address"
             }, status=400)
 
+        # Phone validation
         phone = str(phone).strip()
 
-        if not phone.isdigit() or len(phone) != 10:
+        if not phone.isdigit():
             return JsonResponse({
-                "message": "Phone must contain exactly 10 digits"
+                "message": "Phone number must contain only digits"
             }, status=400)
+
+        if len(phone) != 10:
+            return JsonResponse({
+                "message": "Phone number must contain exactly 10 digits"
+            }, status=400)
+
+        # =========================
+        # DUPLICATE REGISTRATION
+        # =========================
 
         existing_registration = Registration.objects.filter(
             event_id=event_id,
@@ -147,6 +155,10 @@ def registration_list(request):
                 "message": "This email is already registered for this event"
             }, status=400)
 
+        # =========================
+        # CAPACITY CHECK
+        # =========================
+
         if event.capacity is not None:
 
             active_registrations = Registration.objects.filter(
@@ -156,12 +168,15 @@ def registration_list(request):
             ).count()
 
             if active_registrations >= event.capacity:
-
                 return JsonResponse({
-                    "message": "Event registration capacity is full",
+                    "message": "Event capacity is full",
                     "capacity": event.capacity,
                     "registered": active_registrations
                 }, status=400)
+
+        # =========================
+        # CREATE REGISTRATION
+        # =========================
 
         registration = Registration.objects.create(
             event_id=event_id,
@@ -172,13 +187,15 @@ def registration_list(request):
             attendance="Not Marked"
         )
 
-        create_notification(
-            event_id,
-            "Registration",
-            name.strip()
-            + " registered for event "
-            + str(event_id)
-        )
+        # Notification
+        try:
+            create_notification(
+                event_id,
+                "Registration",
+                "New registration received from " + registration.name
+            )
+        except Exception:
+            pass
 
         return JsonResponse({
             "message": "Registration successful",
@@ -193,10 +210,15 @@ def registration_list(request):
             }
         }, status=201)
 
+
+    # =========================
+    # PUT - UPDATE REGISTRATION
+    # =========================
     elif request.method == "PUT":
 
         try:
             data = json.loads(request.body)
+
         except json.JSONDecodeError:
             return JsonResponse({
                 "message": "Invalid JSON data"
@@ -211,6 +233,7 @@ def registration_list(request):
 
         try:
             registration_id = int(registration_id)
+
         except (ValueError, TypeError):
             return JsonResponse({
                 "message": "Registration id must be a valid number"
@@ -220,10 +243,15 @@ def registration_list(request):
             registration = Registration.objects.get(
                 id=registration_id
             )
+
         except Registration.DoesNotExist:
             return JsonResponse({
                 "message": "Registration not found"
             }, status=404)
+
+        # =========================
+        # NAME
+        # =========================
 
         if "name" in data:
 
@@ -234,57 +262,153 @@ def registration_list(request):
 
             registration.name = data["name"].strip()
 
+        # =========================
+        # EMAIL
+        # =========================
+
         if "email" in data:
 
-            email = data["email"]
-
-            if not email or not email.strip():
+            if not data["email"] or not data["email"].strip():
                 return JsonResponse({
                     "message": "Email cannot be empty"
                 }, status=400)
 
-            email = email.strip().lower()
+            email = data["email"].strip().lower()
 
-            if not re.match(
-                r"^[\w\.-]+@[\w\.-]+\.\w+$",
-                email
-            ):
+            email_pattern = r"^[^\s@]+@[^\s@]+\.[^\s@]+$"
+
+            if not re.match(email_pattern, email):
                 return JsonResponse({
-                    "message": "Invalid email format"
+                    "message": "Invalid email address"
+                }, status=400)
+
+            duplicate = Registration.objects.filter(
+                event_id=registration.event_id,
+                email=email
+            ).exclude(
+                id=registration.id
+            ).exclude(
+                status="Cancelled"
+            ).exists()
+
+            if duplicate:
+                return JsonResponse({
+                    "message": "This email is already registered for this event"
                 }, status=400)
 
             registration.email = email
+
+        # =========================
+        # PHONE
+        # =========================
 
         if "phone" in data:
 
             phone = str(data["phone"]).strip()
 
-            if not phone.isdigit() or len(phone) != 10:
+            if not phone.isdigit():
                 return JsonResponse({
-                    "message": "Phone must contain exactly 10 digits"
+                    "message": "Phone number must contain only digits"
+                }, status=400)
+
+            if len(phone) != 10:
+                return JsonResponse({
+                    "message": "Phone number must contain exactly 10 digits"
                 }, status=400)
 
             registration.phone = phone
 
+        # =========================
+        # STATUS
+        # =========================
+
         if "status" in data:
 
-            if data["status"] not in ALLOWED_STATUS:
+            new_status = data["status"]
+
+            allowed_statuses = [
+                "Registered",
+                "Confirmed",
+                "Cancelled"
+            ]
+
+            if new_status not in allowed_statuses:
                 return JsonResponse({
-                    "message": "Invalid registration status",
-                    "allowed_status": ALLOWED_STATUS
+                    "message": (
+                        "Status must be Registered, "
+                        "Confirmed or Cancelled"
+                    )
                 }, status=400)
 
-            registration.status = data["status"]
+            old_status = registration.status
+
+            # Re-registering a cancelled person
+            if (
+                old_status == "Cancelled"
+                and new_status != "Cancelled"
+            ):
+
+                event = Event.objects.get(
+                    id=registration.event_id
+                )
+
+                if event.capacity is not None:
+
+                    active_registrations = Registration.objects.filter(
+                        event_id=registration.event_id
+                    ).exclude(
+                        status="Cancelled"
+                    ).exclude(
+                        id=registration.id
+                    ).count()
+
+                    if active_registrations >= event.capacity:
+                        return JsonResponse({
+                            "message": (
+                                "Cannot reactivate registration. "
+                                "Event capacity is full"
+                            ),
+                            "capacity": event.capacity,
+                            "registered": active_registrations
+                        }, status=400)
+
+            registration.status = new_status
+
+        # =========================
+        # ATTENDANCE
+        # =========================
 
         if "attendance" in data:
 
-            if data["attendance"] not in ALLOWED_ATTENDANCE:
+            attendance = data["attendance"]
+
+            allowed_attendance = [
+                "Not Marked",
+                "Present",
+                "Absent"
+            ]
+
+            if attendance not in allowed_attendance:
                 return JsonResponse({
-                    "message": "Invalid attendance status",
-                    "allowed_attendance": ALLOWED_ATTENDANCE
+                    "message": (
+                        "Attendance must be Not Marked, "
+                        "Present or Absent"
+                    )
                 }, status=400)
 
-            registration.attendance = data["attendance"]
+            # Cancelled registration should not be marked present
+            if (
+                registration.status == "Cancelled"
+                and attendance == "Present"
+            ):
+                return JsonResponse({
+                    "message": (
+                        "Cancelled registration cannot be "
+                        "marked as Present"
+                    )
+                }, status=400)
+
+            registration.attendance = attendance
 
         registration.save()
 
@@ -301,10 +425,15 @@ def registration_list(request):
             }
         })
 
+
+    # =========================
+    # DELETE - CANCEL
+    # =========================
     elif request.method == "DELETE":
 
         try:
             data = json.loads(request.body)
+
         except json.JSONDecodeError:
             return JsonResponse({
                 "message": "Invalid JSON data"
@@ -319,6 +448,7 @@ def registration_list(request):
 
         try:
             registration_id = int(registration_id)
+
         except (ValueError, TypeError):
             return JsonResponse({
                 "message": "Registration id must be a valid number"
@@ -328,42 +458,47 @@ def registration_list(request):
             registration = Registration.objects.get(
                 id=registration_id
             )
+
         except Registration.DoesNotExist:
             return JsonResponse({
                 "message": "Registration not found"
             }, status=404)
 
+        # Soft delete: keep the record but cancel it
         registration.status = "Cancelled"
+        registration.attendance = "Not Marked"
         registration.save()
 
         return JsonResponse({
             "message": "Registration cancelled successfully",
-            "registration": {
-                "id": registration.id,
-                "event_id": registration.event_id,
-                "name": registration.name,
-                "email": registration.email,
-                "phone": registration.phone,
-                "status": registration.status,
-                "attendance": registration.attendance
-            }
+            "registration_id": registration.id
         })
+
+
+    # =========================
+    # METHOD NOT ALLOWED
+    # =========================
 
     return JsonResponse({
         "message": "Method not allowed"
     }, status=405)
 
 
+# =====================================================
+# SET EVENT CAPACITY
+# =====================================================
+
 @csrf_exempt
 def set_event_capacity(request):
 
     if request.method != "POST":
         return JsonResponse({
-            "message": "Only POST method is allowed"
+            "message": "Method not allowed"
         }, status=405)
 
     try:
         data = json.loads(request.body)
+
     except json.JSONDecodeError:
         return JsonResponse({
             "message": "Invalid JSON data"
@@ -374,46 +509,63 @@ def set_event_capacity(request):
 
     if event_id is None:
         return JsonResponse({
-            "message": "event_id is required"
+            "message": "Event id is required"
         }, status=400)
 
     if capacity is None:
         return JsonResponse({
-            "message": "capacity is required"
+            "message": "Capacity is required"
         }, status=400)
 
     try:
         event_id = int(event_id)
         capacity = int(capacity)
+
     except (ValueError, TypeError):
         return JsonResponse({
-            "message": "event_id and capacity must be valid numbers"
+            "message": "Event id and capacity must be valid numbers"
         }, status=400)
 
     if event_id <= 0:
         return JsonResponse({
-            "message": "event_id must be greater than 0"
+            "message": "Event id must be greater than 0"
         }, status=400)
 
     if capacity <= 0:
         return JsonResponse({
-        "message": "capacity must be greater than 0"
+            "message": "Capacity must be greater than 0"
         }, status=400)
 
     try:
-        event = Event.objects.get(
-            id=event_id
-        )
+        event = Event.objects.get(id=event_id)
+
     except Event.DoesNotExist:
         return JsonResponse({
             "message": "Event not found"
         }, status=404)
 
+    active_registrations = Registration.objects.filter(
+        event_id=event_id
+    ).exclude(
+        status="Cancelled"
+    ).count()
+
+    if capacity < active_registrations:
+        return JsonResponse({
+            "message": (
+                "Capacity cannot be less than current "
+                "active registrations"
+            ),
+            "current_registrations": active_registrations,
+            "requested_capacity": capacity
+        }, status=400)
+
     event.capacity = capacity
     event.save()
 
     return JsonResponse({
-        "message": "Event capacity set successfully",
+        "message": "Event capacity updated successfully",
         "event_id": event.id,
-        "capacity": event.capacity
+        "capacity": event.capacity,
+        "current_registrations": active_registrations
     })
