@@ -1,90 +1,87 @@
+from django.http import JsonResponse, HttpResponse
+from django.views.decorators.csrf import csrf_exempt
 import csv
 
-from django.http import JsonResponse, HttpResponse
-
 from events.models import Event
-from allocations.models import Allocation
-from vendors.models import Vendor
 from registrations.models import Registration
-from budgets.models import Budget
-from expenses.models import Expense
+from allocations.models import Allocation
 from resources.models import Resource
+from vendors.models import Vendor
+
 from .models import ConflictRecord
 
+from .helpers import (
+    events_overlap,
+    get_active_registrations,
+    calculate_budget,
+    calculate_resource_status,
+    get_vendor_conflicts
+)
 
+
+@csrf_exempt
 def conflict_report(request):
-
-    if request.method != "GET":
-        return JsonResponse({
-            "message": "Method not allowed"
-        }, status=405)
 
     venue_conflicts = []
     resource_conflicts = []
     vendor_conflicts = []
     registration_conflicts = []
     budget_conflicts = []
-    prevented_conflicts = []
 
     events = list(Event.objects.all())
 
-    # 1. VENUE CONFLICTS
+    # -----------------------------
+    # Venue conflicts
+    # -----------------------------
+
     for i in range(len(events)):
         for j in range(i + 1, len(events)):
 
-            e1 = events[i]
-            e2 = events[j]
+            event1 = events[i]
+            event2 = events[j]
 
-            if (
-                e1.date == e2.date
-                and e1.location.strip().lower() == e2.location.strip().lower()
-                and e1.start_time
-                and e1.end_time
-                and e2.start_time
-                and e2.end_time
-            ):
-                if (
-                    e1.start_time < e2.end_time
-                    and e1.end_time > e2.start_time
-                ):
-                    venue_conflicts.append({
-                        "event_1": e1.id,
-                        "event_2": e2.id,
-                        "location": e1.location,
-                        "message": "Venue time conflict detected"
-                    })
+            if event1.date != event2.date:
+                continue
 
-    # 2. RESOURCE CONFLICTS
+            if event1.location.lower() != event2.location.lower():
+                continue
+
+            if events_overlap(event1, event2):
+
+                venue_conflicts.append({
+                    "event_id": event1.id,
+                    "conflicting_event_id": event2.id,
+                    "location": event1.location,
+                    "description": (
+                        f"Events {event1.id} and {event2.id} "
+                        f"have overlapping schedules at "
+                        f"{event1.location}."
+                    )
+                })
+
+    # -----------------------------
+    # Resource conflicts
+    # -----------------------------
+
     allocations = Allocation.objects.all()
-
-    checked_resource_pairs = set()
 
     for allocation in allocations:
 
         try:
-            resource = Resource.objects.get(
-                id=allocation.resource_id
-            )
-            event = Event.objects.get(
-                id=allocation.event_id
-            )
-        except (Resource.DoesNotExist, Event.DoesNotExist):
+            event = Event.objects.get(id=allocation.event_id)
+            resource = Resource.objects.get(id=allocation.resource_id)
+        except (Event.DoesNotExist, Resource.DoesNotExist):
             continue
 
-        for other in allocations:
+        overlapping_quantity = 0
 
-            if allocation.id == other.id:
-                continue
+        other_allocations = allocations.filter(
+            resource_id=allocation.resource_id
+        ).exclude(
+            event_id=event.id
+        )
 
-            if allocation.resource_id != other.resource_id:
-                continue
-
-            pair = tuple(sorted([allocation.id, other.id]))
-
-            if pair in checked_resource_pairs:
-                continue
-
-            checked_resource_pairs.add(pair)
+        for other in other_allocations:
 
             try:
                 other_event = Event.objects.get(
@@ -93,249 +90,179 @@ def conflict_report(request):
             except Event.DoesNotExist:
                 continue
 
-            if event.date != other_event.date:
+            if other_event.date != event.date:
                 continue
 
-            if not (
-                event.start_time
-                and event.end_time
-                and other_event.start_time
-                and other_event.end_time
-            ):
-                continue
+            if events_overlap(event, other_event):
+                overlapping_quantity += other.quantity
 
-            if (
-                event.start_time < other_event.end_time
-                and event.end_time > other_event.start_time
-            ):
+        if overlapping_quantity + allocation.quantity > resource.quantity:
 
-                total_required = (
-                    allocation.quantity + other.quantity
+            resource_conflicts.append({
+                "event_id": event.id,
+                "resource_id": resource.id,
+                "resource_name": resource.name,
+                "required": allocation.quantity,
+                "already_required": overlapping_quantity,
+                "capacity": resource.quantity,
+                "description": (
+                    f"Resource {resource.name} is insufficient "
+                    f"for Event {event.id}."
                 )
+            })
 
-                if total_required > resource.quantity:
+    # -----------------------------
+    # Vendor conflicts
+    # -----------------------------
 
-                    resource_conflicts.append({
-                        "event_id": event.id,
-                        "conflicting_event_id": other_event.id,
-                        "resource_id": resource.id,
-                        "resource": resource.name,
-                        "total_required": total_required,
-                        "total_available": resource.quantity,
-                        "message": "Resource quantity conflict detected"
-                    })
+    for event in events:
 
-    # 3. VENDOR CONFLICTS
-    vendors = list(Vendor.objects.all())
+        event_vendors = Vendor.objects.filter(
+            event_id=event.id
+        ).exclude(
+            status="Cancelled"
+        )
 
-    for i in range(len(vendors)):
-        for j in range(i + 1, len(vendors)):
+        conflicts = get_vendor_conflicts(
+            event,
+            event_vendors,
+            Vendor,
+            Event
+        )
 
-            v1 = vendors[i]
-            v2 = vendors[j]
+        vendor_conflicts.extend(conflicts)
 
-            if v1.status == "Cancelled" or v2.status == "Cancelled":
-                continue
+    # -----------------------------
+    # Registration conflicts
+    # -----------------------------
 
-            if (
-                v1.company.strip().lower()
-                != v2.company.strip().lower()
-            ):
-                continue
-
-            try:
-                e1 = Event.objects.get(id=v1.event_id)
-                e2 = Event.objects.get(id=v2.event_id)
-            except Event.DoesNotExist:
-                continue
-
-            if e1.date != e2.date:
-                continue
-
-            if not (
-                e1.start_time
-                and e1.end_time
-                and e2.start_time
-                and e2.end_time
-            ):
-                continue
-
-            if (
-                e1.start_time < e2.end_time
-                and e1.end_time > e2.start_time
-            ):
-                vendor_conflicts.append({
-                    "vendor_company": v1.company,
-                    "event_1": e1.id,
-                    "event_2": e2.id,
-                    "message": "Vendor scheduling conflict detected"
-                })
-
-    # 4. REGISTRATION / CAPACITY CONFLICTS
     for event in events:
 
         if event.capacity is None:
             continue
 
-        active_registrations = Registration.objects.filter(
-            event_id=event.id
-        ).exclude(
-            status="Cancelled"
+        active_count = get_active_registrations(
+            event.id
         ).count()
 
-        if active_registrations > event.capacity:
+        if active_count > event.capacity:
 
             registration_conflicts.append({
                 "event_id": event.id,
                 "capacity": event.capacity,
-                "registered": active_registrations,
-                "message": "Event capacity exceeded"
+                "registered": active_count,
+                "description": (
+                    f"Event {event.id} has more active "
+                    f"registrations than its capacity."
+                )
             })
 
-    # 5. BUDGET CONFLICTS
-    budgets = Budget.objects.all()
+    # -----------------------------
+    # Budget conflicts
+    # -----------------------------
 
-    for budget in budgets:
+    for event in events:
 
-        expenses = Expense.objects.filter(
-            event_id=budget.event_id
+        budget_data = calculate_budget(
+            event.id,
+            event.budget
         )
 
-        total_expenses = sum(
-            float(expense.amount)
-            for expense in expenses
-        )
-
-        if total_expenses > float(budget.total_budget):
+        if budget_data["expenses"] > budget_data["budget"]:
 
             budget_conflicts.append({
-                "event_id": budget.event_id,
-                "budget": float(budget.total_budget),
-                "expenses": total_expenses,
-                "remaining": (
-                    float(budget.total_budget)
-                    - total_expenses
-                ),
-                "message": "Budget exceeded"
+                "event_id": event.id,
+                "budget": budget_data["budget"],
+                "expenses": budget_data["expenses"],
+                "remaining": budget_data["remaining"],
+                "description": (
+                    f"Event {event.id} has exceeded its budget."
+                )
             })
 
-    # 6. PREVENTED CONFLICTS
-    records = ConflictRecord.objects.all().order_by(
-        "-created_at"
+    # -----------------------------
+    # Historical prevented conflicts
+    # -----------------------------
+
+    prevented_conflicts = list(
+        ConflictRecord.objects.filter(
+            status="Prevented"
+        ).values(
+            "id",
+            "conflict_type",
+            "event_id",
+            "conflicting_event_id",
+            "resource_id",
+            "description",
+            "status",
+            "created_at"
+        )
     )
 
-    for record in records:
-
-        prevented_conflicts.append({
-            "id": record.id,
-            "conflict_type": record.conflict_type,
-            "event_id": record.event_id,
-            "conflicting_event_id": record.conflicting_event_id,
-            "resource_id": record.resource_id,
-            "description": record.description,
-            "status": record.status,
-            "created_at": record.created_at
-        })
-
-    total_conflicts = (
+    current_conflicts = (
         len(venue_conflicts)
         + len(resource_conflicts)
         + len(vendor_conflicts)
         + len(registration_conflicts)
         + len(budget_conflicts)
-        + len(prevented_conflicts)
     )
 
     return JsonResponse({
-        "message": "Conflict report generated successfully",
-        "total_conflicts": total_conflicts,
-        "conflicts": {
-            "venue": venue_conflicts,
-            "resource": resource_conflicts,
-            "vendor": vendor_conflicts,
-            "registration": registration_conflicts,
-            "budget": budget_conflicts,
-            "prevented": prevented_conflicts
-        }
+        "current_conflict_count": current_conflicts,
+
+        "venue_conflicts": venue_conflicts,
+
+        "resource_conflicts": resource_conflicts,
+
+        "vendor_conflicts": vendor_conflicts,
+
+        "registration_conflicts": registration_conflicts,
+
+        "budget_conflicts": budget_conflicts,
+
+        "prevented_conflict_count": len(
+            prevented_conflicts
+        ),
+
+        "prevented_conflicts": prevented_conflicts
     })
+
+
+@csrf_exempt
 def dashboard_summary(request):
 
-    if request.method != "GET":
-        return JsonResponse({
-            "message": "Method not allowed"
-        }, status=405)
+    events = Event.objects.all()
 
-    events = Event.objects.all().order_by("-id")
-
-    summary = []
+    result = []
 
     for event in events:
 
-        registrations = Registration.objects.filter(
-            event_id=event.id
-        ).exclude(
-            status="Cancelled"
+        registrations = get_active_registrations(
+            event.id
         )
 
-        registered_count = registrations.count()
+        registered = registrations.count()
 
-        present_count = registrations.filter(
+        present = registrations.filter(
             attendance="Present"
         ).count()
 
-        absent_count = registrations.filter(
+        absent = registrations.filter(
             attendance="Absent"
         ).count()
 
-        expected_attendance = registered_count
-
-        if registered_count > 0:
+        if registered > 0:
             attendance_rate = round(
-                (present_count / registered_count) * 100,
+                (present / registered) * 100,
                 2
             )
         else:
             attendance_rate = 0
 
-        if event.capacity and event.capacity > 0:
-            registration_utilization = round(
-                (registered_count / event.capacity) * 100,
-                2
-            )
-        else:
-            registration_utilization = 0
-
-        budget_record = Budget.objects.filter(
-            event_id=event.id
-        ).first()
-
-        if budget_record:
-            total_budget = float(
-                budget_record.total_budget
-            )
-        else:
-            total_budget = float(event.budget or 0)
-
-        expenses = Expense.objects.filter(
-            event_id=event.id
+        budget_data = calculate_budget(
+            event.id,
+            event.budget
         )
-
-        total_expenses = sum(
-            float(expense.amount)
-            for expense in expenses
-        )
-
-        remaining_budget = (
-            total_budget - total_expenses
-        )
-
-        if total_budget > 0:
-            budget_utilization = round(
-                (total_expenses / total_budget) * 100,
-                2
-            )
-        else:
-            budget_utilization = 0
 
         allocations = Allocation.objects.filter(
             event_id=event.id
@@ -345,72 +272,18 @@ def dashboard_summary(request):
 
         for allocation in allocations:
 
-            resource = Resource.objects.filter(
-                id=allocation.resource_id
-            ).first()
-
-            if not resource:
-                continue
-
-            required_quantity = allocation.quantity
-
-            overlapping_quantity = 0
-
-            other_allocations = Allocation.objects.filter(
-                resource_id=resource.id
-            ).exclude(
-                event_id=event.id
+            resource_status = calculate_resource_status(
+                event,
+                allocation,
+                Resource,
+                Allocation,
+                Event
             )
 
-            for other in other_allocations:
-
-                other_event = Event.objects.filter(
-                    id=other.event_id
-                ).first()
-
-                if not other_event:
-                    continue
-
-                if other_event.date != event.date:
-                    continue
-
-                if (
-                    event.start_time is None
-                    or event.end_time is None
-                    or other_event.start_time is None
-                    or other_event.end_time is None
-                ):
-                    continue
-
-                if (
-                    other_event.start_time < event.end_time
-                    and other_event.end_time > event.start_time
-                ):
-                    overlapping_quantity += other.quantity
-
-            available_quantity = max(
-                resource.quantity - overlapping_quantity,
-                0
-            )
-
-            shortage = max(
-                required_quantity - available_quantity,
-                0
-            )
-
-            if shortage > 0:
-                status = "Insufficient"
-            else:
-                status = "Sufficient"
-
-            resource_analysis.append({
-                "resource_id": resource.id,
-                "resource_name": resource.name,
-                "required": required_quantity,
-                "available": available_quantity,
-                "shortage": shortage,
-                "status": status
-            })
+            if resource_status:
+                resource_analysis.append(
+                    resource_status
+                )
 
         vendor_count = Vendor.objects.filter(
             event_id=event.id
@@ -418,145 +291,64 @@ def dashboard_summary(request):
             status="Cancelled"
         ).count()
 
-        venue_conflicts = 0
-        resource_conflicts = 0
-        vendor_conflicts = 0
-
-        other_events = Event.objects.filter(
-            date=event.date
-        ).exclude(
-            id=event.id
-        )
-
-        if (
-            event.start_time is not None
-            and event.end_time is not None
-        ):
-
-            for other_event in other_events:
-
-                if (
-                    other_event.start_time is None
-                    or other_event.end_time is None
-                ):
-                    continue
-
-                if (
-                    event.start_time < other_event.end_time
-                    and event.end_time > other_event.start_time
-                    and event.location.strip().lower()
-                    == other_event.location.strip().lower()
-                ):
-                    venue_conflicts += 1
-
-        resource_conflicts = ConflictRecord.objects.filter(
-            conflict_type="Resource"
-        ).filter(
-            event_id=event.id
-        ).count()
-
-        vendor_records = Vendor.objects.filter(
-            event_id=event.id
-        ).exclude(
-            status="Cancelled"
-        )
-
-        for vendor in vendor_records:
-
-            conflicting_vendors = Vendor.objects.filter(
-                company__iexact=vendor.company,
-                status__in=["Pending", "Confirmed"]
-            ).exclude(
-                id=vendor.id
+        if event.capacity:
+            registration_utilization = round(
+                (registered / event.capacity) * 100,
+                2
             )
+        else:
+            registration_utilization = 0
 
-            for other_vendor in conflicting_vendors:
-
-                if other_vendor.event_id == event.id:
-                    continue
-
-                other_event = Event.objects.filter(
-                    id=other_vendor.event_id
-                ).first()
-
-                if not other_event:
-                    continue
-
-                if other_event.date != event.date:
-                    continue
-
-                if (
-                    event.start_time is None
-                    or event.end_time is None
-                    or other_event.start_time is None
-                    or other_event.end_time is None
-                ):
-                    continue
-
-                if (
-                    event.start_time < other_event.end_time
-                    and event.end_time > other_event.start_time
-                ):
-                    vendor_conflicts += 1
-
-        vendor_conflicts = vendor_conflicts // 2
-
-        total_conflicts = (
-            venue_conflicts
-            + resource_conflicts
-            + vendor_conflicts
-        )
-
-        summary.append({
+        result.append({
             "event_id": event.id,
             "event_name": event.name,
-            "date": event.date,
-            "start_time": event.start_time,
-            "end_time": event.end_time,
-            "location": event.location,
 
-            "capacity": event.capacity,
+            "registered": registered,
+            "expected_attendance": registered,
 
-            "registered": registered_count,
-            "expected_attendance": expected_attendance,
-            "present": present_count,
-            "absent": absent_count,
+            "present": present,
+            "absent": absent,
 
             "attendance_rate": attendance_rate,
+
+            "capacity": event.capacity,
             "registration_utilization": registration_utilization,
 
-            "budget": total_budget,
-            "expenses": total_expenses,
-            "remaining_budget": remaining_budget,
-            "budget_utilization": budget_utilization,
+            "budget": budget_data["budget"],
+            "expenses": budget_data["expenses"],
+            "remaining_budget": budget_data["remaining"],
+            "budget_utilization": budget_data["utilization"],
 
-            "resources": resource_analysis,
+            "budget_status": (
+                "Exceeded"
+                if budget_data["expenses"] > budget_data["budget"]
+                else (
+                    "Almost Exceeded"
+                    if budget_data["budget"] > 0
+                    and budget_data["utilization"] >= 90
+                    else "Within Budget"
+                )
+            ),
 
-            "vendor_count": vendor_count,
+            "resource_analysis": resource_analysis,
 
-            "venue_conflicts": venue_conflicts,
-            "resource_conflicts": resource_conflicts,
-            "vendor_conflicts": vendor_conflicts,
-            "total_conflicts": total_conflicts
+            "vendor_count": vendor_count
         })
 
     return JsonResponse({
-        "message": "Dashboard summary generated successfully",
-        "events": summary
+        "events": result
     })
-def dashboard_export(request):
 
-    if request.method != "GET":
-        return JsonResponse({
-            "message": "Method not allowed"
-        }, status=405)
+
+@csrf_exempt
+def dashboard_export(request):
 
     response = HttpResponse(
         content_type="text/csv"
     )
 
     response["Content-Disposition"] = (
-        'attachment; filename="smart_event_report.csv"'
+        'attachment; filename="event_dashboard_report.csv"'
     )
 
     writer = csv.writer(response)
@@ -579,261 +371,83 @@ def dashboard_export(request):
         "Expenses",
         "Remaining Budget",
         "Budget Utilization",
-        "Resources Required",
-        "Resources Available",
-        "Resource Shortage",
-        "Vendor Count",
-        "Venue Conflicts",
-        "Resource Conflicts",
-        "Vendor Conflicts",
-        "Total Conflicts"
+        "Resource Details",
+        "Vendor Count"
     ])
 
-    events = Event.objects.all().order_by("-id")
+    events = Event.objects.all()
 
     for event in events:
 
-        registrations = Registration.objects.filter(
-            event_id=event.id
-        ).exclude(
-            status="Cancelled"
+        registrations = get_active_registrations(
+            event.id
         )
 
-        registered_count = registrations.count()
+        registered = registrations.count()
 
-        present_count = registrations.filter(
+        present = registrations.filter(
             attendance="Present"
         ).count()
 
-        absent_count = registrations.filter(
+        absent = registrations.filter(
             attendance="Absent"
         ).count()
 
-        expected_attendance = registered_count
-
-        if registered_count > 0:
+        if registered > 0:
             attendance_rate = round(
-                (present_count / registered_count) * 100,
+                (present / registered) * 100,
                 2
             )
         else:
             attendance_rate = 0
 
-        if event.capacity and event.capacity > 0:
+        if event.capacity:
             registration_utilization = round(
-                (registered_count / event.capacity) * 100,
+                (registered / event.capacity) * 100,
                 2
             )
         else:
             registration_utilization = 0
 
-        budget_record = Budget.objects.filter(
-            event_id=event.id
-        ).first()
-
-        if budget_record:
-            total_budget = float(
-                budget_record.total_budget
-            )
-        else:
-            total_budget = float(event.budget or 0)
-
-        expenses = Expense.objects.filter(
-            event_id=event.id
+        budget_data = calculate_budget(
+            event.id,
+            event.budget
         )
-
-        total_expenses = sum(
-            float(expense.amount)
-            for expense in expenses
-        )
-
-        remaining_budget = (
-            total_budget - total_expenses
-        )
-
-        if total_budget > 0:
-            budget_utilization = round(
-                (total_expenses / total_budget) * 100,
-                2
-            )
-        else:
-            budget_utilization = 0
 
         allocations = Allocation.objects.filter(
             event_id=event.id
         )
 
-        resources_required = 0
-        resources_available = 0
-        resource_shortage = 0
-
-        processed_resources = set()
+        resource_details = []
 
         for allocation in allocations:
 
-            resource = Resource.objects.filter(
-                id=allocation.resource_id
-            ).first()
-
-            if not resource:
-                continue
-
-            if resource.id in processed_resources:
-                continue
-
-            processed_resources.add(resource.id)
-
-            required = Allocation.objects.filter(
-                event_id=event.id,
-                resource_id=resource.id
+            status = calculate_resource_status(
+                event,
+                allocation,
+                Resource,
+                Allocation,
+                Event
             )
 
-            required_quantity = sum(
-                item.quantity
-                for item in required
-            )
+            if status:
 
-            overlapping_quantity = 0
+                resource_details.append(
+                    f"{status['resource_name']}: "
+                    f"Required={status['required']}, "
+                    f"Available={status['available']}, "
+                    f"Shortage={status['shortage']}"
+                )
 
-            other_allocations = Allocation.objects.filter(
-                resource_id=resource.id
-            ).exclude(
-                event_id=event.id
-            )
-
-            for other in other_allocations:
-
-                other_event = Event.objects.filter(
-                    id=other.event_id
-                ).first()
-
-                if not other_event:
-                    continue
-
-                if other_event.date != event.date:
-                    continue
-
-                if (
-                    event.start_time is None
-                    or event.end_time is None
-                    or other_event.start_time is None
-                    or other_event.end_time is None
-                ):
-                    continue
-
-                if (
-                    other_event.start_time < event.end_time
-                    and other_event.end_time > event.start_time
-                ):
-                    overlapping_quantity += other.quantity
-
-            available_quantity = max(
-                resource.quantity - overlapping_quantity,
-                0
-            )
-
-            shortage = max(
-                required_quantity - available_quantity,
-                0
-            )
-
-            resources_required += required_quantity
-            resources_available += available_quantity
-            resource_shortage += shortage
+        resource_text = " | ".join(
+            resource_details
+        )
 
         vendor_count = Vendor.objects.filter(
             event_id=event.id
         ).exclude(
             status="Cancelled"
         ).count()
-
-        venue_conflicts = 0
-
-        other_events = Event.objects.filter(
-            date=event.date
-        ).exclude(
-            id=event.id
-        )
-
-        if (
-            event.start_time is not None
-            and event.end_time is not None
-        ):
-
-            for other_event in other_events:
-
-                if (
-                    other_event.start_time is None
-                    or other_event.end_time is None
-                ):
-                    continue
-
-                if (
-                    event.start_time < other_event.end_time
-                    and event.end_time > other_event.start_time
-                    and event.location.strip().lower()
-                    == other_event.location.strip().lower()
-                ):
-                    venue_conflicts += 1
-
-        resource_conflicts = ConflictRecord.objects.filter(
-            conflict_type="Resource",
-            event_id=event.id
-        ).count()
-
-        vendor_conflicts = 0
-
-        vendor_records = Vendor.objects.filter(
-            event_id=event.id
-        ).exclude(
-            status="Cancelled"
-        )
-
-        for vendor in vendor_records:
-
-            conflicting_vendors = Vendor.objects.filter(
-                company__iexact=vendor.company,
-                status__in=["Pending", "Confirmed"]
-            ).exclude(
-                id=vendor.id
-            )
-
-            for other_vendor in conflicting_vendors:
-
-                if other_vendor.event_id == event.id:
-                    continue
-
-                other_event = Event.objects.filter(
-                    id=other_vendor.event_id
-                ).first()
-
-                if not other_event:
-                    continue
-
-                if other_event.date != event.date:
-                    continue
-
-                if (
-                    event.start_time is None
-                    or event.end_time is None
-                    or other_event.start_time is None
-                    or other_event.end_time is None
-                ):
-                    continue
-
-                if (
-                    event.start_time < other_event.end_time
-                    and event.end_time > other_event.start_time
-                ):
-                    vendor_conflicts += 1
-
-        vendor_conflicts = vendor_conflicts // 2
-
-        total_conflicts = (
-            venue_conflicts
-            + resource_conflicts
-            + vendor_conflicts
-        )
 
         writer.writerow([
             event.id,
@@ -843,249 +457,172 @@ def dashboard_export(request):
             event.end_time,
             event.location,
             event.capacity,
-            registered_count,
-            expected_attendance,
-            present_count,
-            absent_count,
+            registered,
+            registered,
+            present,
+            absent,
             attendance_rate,
             registration_utilization,
-            total_budget,
-            total_expenses,
-            remaining_budget,
-            budget_utilization,
-            resources_required,
-            resources_available,
-            resource_shortage,
-            vendor_count,
-            venue_conflicts,
-            resource_conflicts,
-            vendor_conflicts,
-            total_conflicts
+            budget_data["budget"],
+            budget_data["expenses"],
+            budget_data["remaining"],
+            budget_data["utilization"],
+            resource_text,
+            vendor_count
         ])
 
     return response
-def dashboard_overview(request):
 
-    if request.method != "GET":
-        return JsonResponse({
-            "message": "Method not allowed"
-        }, status=405)
+
+@csrf_exempt
+def dashboard_overview(request):
 
     events = Event.objects.all()
 
     total_events = events.count()
+
     total_registered = 0
     total_expected = 0
     total_present = 0
+
     total_budget = 0
     total_expenses = 0
-    total_conflicts = 0
-    resource_shortages = 0
 
-    event_summary = []
+    total_current_conflicts = 0
+    total_resource_shortages = 0
+
+    event_details = []
 
     for event in events:
 
-        registrations = Registration.objects.filter(
-            event_id=event.id
-        ).exclude(status="Cancelled")
+        registrations = get_active_registrations(
+            event.id
+        )
 
         registered = registrations.count()
+
         expected = registered
 
         present = registrations.filter(
             attendance="Present"
         ).count()
 
-        attendance_rate = 0
+        total_registered += registered
+        total_expected += expected
+        total_present += present
 
         if registered > 0:
             attendance_rate = round(
                 (present / registered) * 100,
                 2
             )
-
-        budget_record = Budget.objects.filter(
-            event_id=event.id
-        ).first()
-
-        if budget_record:
-            budget = float(budget_record.total_budget)
         else:
-            budget = float(event.budget or 0)
+            attendance_rate = 0
 
-        expenses = Expense.objects.filter(
-            event_id=event.id
+        budget_data = calculate_budget(
+            event.id,
+            event.budget
         )
 
-        expense_total = sum(
-            float(expense.amount)
-            for expense in expenses
+        total_budget += budget_data["budget"]
+        total_expenses += budget_data["expenses"]
+
+        budget_conflict = (
+            budget_data["expenses"]
+            > budget_data["budget"]
         )
 
         venue_conflicts = 0
 
-        other_events = Event.objects.filter(
-            date=event.date
-        ).exclude(id=event.id)
+        for other_event in events:
 
-        if (
-            event.start_time is not None
-            and event.end_time is not None
-        ):
+            if other_event.id == event.id:
+                continue
 
-            for other_event in other_events:
+            if other_event.date != event.date:
+                continue
 
-                if (
-                    other_event.start_time is None
-                    or other_event.end_time is None
-                ):
-                    continue
+            if (
+                other_event.location.lower()
+                != event.location.lower()
+            ):
+                continue
 
-                if (
-                    event.start_time < other_event.end_time
-                    and event.end_time > other_event.start_time
-                    and event.location.strip().lower()
-                    == other_event.location.strip().lower()
-                ):
-                    venue_conflicts += 1
+            if events_overlap(event, other_event):
+                venue_conflicts += 1
 
-        resource_conflicts = ConflictRecord.objects.filter(
-            conflict_type="Resource",
-            event_id=event.id
-        ).count()
-
-        vendor_conflicts = 0
-
-        vendors = Vendor.objects.filter(
-            event_id=event.id
-        ).exclude(status="Cancelled")
-
-        for vendor in vendors:
-
-            other_vendors = Vendor.objects.filter(
-                company__iexact=vendor.company,
-                status__in=["Pending", "Confirmed"]
-            ).exclude(id=vendor.id)
-
-            for other_vendor in other_vendors:
-
-                if other_vendor.event_id == event.id:
-                    continue
-
-                other_event = Event.objects.filter(
-                    id=other_vendor.event_id
-                ).first()
-
-                if not other_event:
-                    continue
-
-                if other_event.date != event.date:
-                    continue
-
-                if (
-                    event.start_time is None
-                    or event.end_time is None
-                    or other_event.start_time is None
-                    or other_event.end_time is None
-                ):
-                    continue
-
-                if (
-                    event.start_time < other_event.end_time
-                    and event.end_time > other_event.start_time
-                ):
-                    vendor_conflicts += 1
-
-        vendor_conflicts = vendor_conflicts // 2
-
-        event_conflicts = (
-            venue_conflicts
-            + resource_conflicts
-            + vendor_conflicts
-        )
+        resource_conflicts = 0
+        resource_shortage = 0
 
         allocations = Allocation.objects.filter(
             event_id=event.id
         )
 
-        shortage_for_event = 0
-
         for allocation in allocations:
 
-            resource = Resource.objects.filter(
-                id=allocation.resource_id
-            ).first()
-
-            if not resource:
-                continue
-
-            overlapping_quantity = 0
-
-            other_allocations = Allocation.objects.filter(
-                resource_id=resource.id
-            ).exclude(event_id=event.id)
-
-            for other in other_allocations:
-
-                other_event = Event.objects.filter(
-                    id=other.event_id
-                ).first()
-
-                if not other_event:
-                    continue
-
-                if other_event.date != event.date:
-                    continue
-
-                if (
-                    event.start_time is None
-                    or event.end_time is None
-                    or other_event.start_time is None
-                    or other_event.end_time is None
-                ):
-                    continue
-
-                if (
-                    other_event.start_time < event.end_time
-                    and other_event.end_time > event.start_time
-                ):
-                    overlapping_quantity += other.quantity
-
-            available = max(
-                resource.quantity - overlapping_quantity,
-                0
+            status = calculate_resource_status(
+                event,
+                allocation,
+                Resource,
+                Allocation,
+                Event
             )
 
-            shortage = max(
-                allocation.quantity - available,
-                0
+            if status:
+
+                if status["shortage"] > 0:
+                    resource_shortage += status["shortage"]
+                    resource_conflicts += 1
+
+        event_vendors = Vendor.objects.filter(
+            event_id=event.id
+        ).exclude(
+            status="Cancelled"
+        )
+
+        vendor_conflicts = len(
+            get_vendor_conflicts(
+                event,
+                event_vendors,
+                Vendor,
+                Event
             )
+        )
 
-            shortage_for_event += shortage
+        event_conflicts = (
+            venue_conflicts
+            + resource_conflicts
+            + vendor_conflicts
+            + (1 if budget_conflict else 0)
+        )
 
-        total_registered += registered
-        total_expected += expected
-        total_present += present
-        total_budget += budget
-        total_expenses += expense_total
-        total_conflicts += event_conflicts
-        resource_shortages += shortage_for_event
+        total_current_conflicts += event_conflicts
+        total_resource_shortages += resource_shortage
 
-        event_summary.append({
+        event_details.append({
             "event_id": event.id,
             "event_name": event.name,
+
             "registered": registered,
-            "expected_attendance": expected,
+            "expected": expected,
             "present": present,
+
             "attendance_rate": attendance_rate,
-            "budget": budget,
-            "expenses": expense_total,
-            "remaining_budget": budget - expense_total,
+
+            "budget": budget_data["budget"],
+            "expenses": budget_data["expenses"],
+            "remaining_budget": budget_data["remaining"],
+            "budget_utilization": budget_data["utilization"],
+
+            "budget_conflict": budget_conflict,
+
             "venue_conflicts": venue_conflicts,
             "resource_conflicts": resource_conflicts,
             "vendor_conflicts": vendor_conflicts,
-            "total_conflicts": event_conflicts
+
+            "total_conflicts": event_conflicts,
+
+            "resource_shortage": resource_shortage
         })
 
     if total_registered > 0:
@@ -1104,28 +641,34 @@ def dashboard_overview(request):
     else:
         budget_utilization = 0
 
-    if total_conflicts == 0 and resource_shortages == 0:
-        system_status = "Ready"
-    else:
-        system_status = "Issues Detected"
+    system_status = (
+        "Issues Detected"
+        if (
+            total_current_conflicts > 0
+            or total_resource_shortages > 0
+        )
+        else "Ready"
+    )
 
     return JsonResponse({
-        "message": "Final dashboard generated successfully",
+        "total_events": total_events,
 
-        "overview": {
-            "total_events": total_events,
-            "total_registered": total_registered,
-            "total_expected_attendance": total_expected,
-            "total_present": total_present,
-            "overall_attendance_rate": overall_attendance_rate,
-            "total_budget": total_budget,
-            "total_expenses": total_expenses,
-            "remaining_budget": total_budget - total_expenses,
-            "budget_utilization": budget_utilization,
-            "total_conflicts": total_conflicts,
-            "resource_shortages": resource_shortages,
-            "system_status": system_status
-        },
+        "total_registered": total_registered,
+        "total_expected": total_expected,
+        "total_present": total_present,
 
-        "events": event_summary
+        "overall_attendance_rate": overall_attendance_rate,
+
+        "total_budget": total_budget,
+        "total_expenses": total_expenses,
+        "remaining_budget": total_budget - total_expenses,
+        "budget_utilization": budget_utilization,
+
+        "total_conflicts": total_current_conflicts,
+
+        "resource_shortages": total_resource_shortages,
+
+        "system_status": system_status,
+
+        "events": event_details
     })

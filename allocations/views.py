@@ -22,8 +22,11 @@ def times_overlap(start1, end1, start2, end2):
 
 
 @csrf_exempt
-def allocation_list(request):
+def allocation_list(request, id=None):
 
+    # =========================
+    # GET ALL ALLOCATIONS
+    # =========================
     if request.method == "GET":
 
         allocations = Allocation.objects.all().order_by("-id")
@@ -45,6 +48,9 @@ def allocation_list(request):
             "allocations": data
         })
 
+    # =========================
+    # POST - CREATE ALLOCATION
+    # =========================
     if request.method == "POST":
 
         try:
@@ -98,6 +104,7 @@ def allocation_list(request):
                 "message": "Quantity must be greater than 0"
             }, status=400)
 
+        # Check event
         try:
             event = Event.objects.get(id=event_id)
 
@@ -116,6 +123,7 @@ def allocation_list(request):
                 "message": "Event start time must be before end time"
             }, status=400)
 
+        # Check resource
         try:
             resource = Resource.objects.get(id=resource_id)
 
@@ -131,6 +139,8 @@ def allocation_list(request):
                 "requested": quantity
             }, status=400)
 
+        # Same resource cannot be allocated twice
+        # to the same event
         existing_same_event = Allocation.objects.filter(
             event_id=event_id,
             resource_id=resource_id
@@ -142,9 +152,12 @@ def allocation_list(request):
                 "existing_quantity": existing_same_event.quantity
             }, status=400)
 
+        # Check overlapping allocations
         overlapping_allocations = Allocation.objects.filter(
             resource_id=resource_id
-        ).exclude(event_id=event_id)
+        ).exclude(
+            event_id=event_id
+        )
 
         overlapping_quantity = 0
         conflicting_events = []
@@ -184,6 +197,7 @@ def allocation_list(request):
 
         total_required = overlapping_quantity + quantity
 
+        # Resource capacity conflict
         if total_required > resource.quantity:
 
             message = (
@@ -219,6 +233,7 @@ def allocation_list(request):
                 "conflicting_event_ids": conflicting_events
             }, status=400)
 
+        # Create allocation
         allocation = Allocation.objects.create(
             event_id=event_id,
             resource_id=resource_id,
@@ -239,6 +254,9 @@ def allocation_list(request):
             }
         }, status=201)
 
+    # =========================
+    # PUT - UPDATE ALLOCATION
+    # =========================
     if request.method == "PUT":
 
         try:
@@ -249,7 +267,10 @@ def allocation_list(request):
                 "message": "Invalid JSON data"
             }, status=400)
 
-        allocation_id = data.get("id")
+        # Prefer ID from URL.
+        # If URL ID is not provided, allow ID from JSON
+        # for backward compatibility.
+        allocation_id = id if id is not None else data.get("id")
 
         if allocation_id is None:
             return JsonResponse({
@@ -264,6 +285,7 @@ def allocation_list(request):
                 "message": "Allocation id must be a valid number"
             }, status=400)
 
+        # Find allocation
         try:
             allocation = Allocation.objects.get(
                 id=allocation_id
@@ -292,6 +314,7 @@ def allocation_list(request):
                 "message": "Quantity must be greater than 0"
             }, status=400)
 
+        # Check associated event
         try:
             event = Event.objects.get(
                 id=allocation.event_id
@@ -302,6 +325,17 @@ def allocation_list(request):
                 "message": "Associated event not found"
             }, status=404)
 
+        if event.start_time is None or event.end_time is None:
+            return JsonResponse({
+                "message": "Event must have start time and end time"
+            }, status=400)
+
+        if event.start_time >= event.end_time:
+            return JsonResponse({
+                "message": "Event start time must be before end time"
+            }, status=400)
+
+        # Check associated resource
         try:
             resource = Resource.objects.get(
                 id=allocation.resource_id
@@ -314,9 +348,12 @@ def allocation_list(request):
 
         if new_quantity > resource.quantity:
             return JsonResponse({
-                "message": "Requested quantity exceeds total resource quantity"
+                "message": "Requested quantity exceeds total resource quantity",
+                "total_quantity": resource.quantity,
+                "requested": new_quantity
             }, status=400)
 
+        # Check other allocations for overlap
         overlapping_quantity = 0
         conflicting_events = []
 
@@ -345,12 +382,6 @@ def allocation_list(request):
             ):
                 continue
 
-            if (
-                event.start_time is None
-                or event.end_time is None
-            ):
-                continue
-
             if times_overlap(
                 other_event.start_time,
                 other_event.end_time,
@@ -365,11 +396,16 @@ def allocation_list(request):
                         other.event_id
                     )
 
+        # Check total capacity
         if overlapping_quantity + new_quantity > resource.quantity:
 
             message = (
                 f"Resource allocation update causes a conflict "
-                f"for {resource.name}."
+                f"for {resource.name}. "
+                f"Requested: {new_quantity}, "
+                f"already required during overlapping events: "
+                f"{overlapping_quantity}, "
+                f"total capacity: {resource.quantity}."
             )
 
             send_notification(
@@ -397,6 +433,7 @@ def allocation_list(request):
                 "conflicting_event_ids": conflicting_events
             }, status=400)
 
+        # Update allocation
         allocation.quantity = new_quantity
         allocation.start_time = event.start_time
         allocation.end_time = event.end_time
@@ -415,17 +452,22 @@ def allocation_list(request):
             }
         })
 
+    # =========================
+    # DELETE - DELETE ALLOCATION
+    # =========================
     if request.method == "DELETE":
 
         try:
-            data = json.loads(request.body)
+            data = json.loads(request.body) if request.body else {}
 
         except json.JSONDecodeError:
             return JsonResponse({
                 "message": "Invalid JSON data"
             }, status=400)
 
-        allocation_id = data.get("id")
+        # Prefer ID from URL.
+        # If URL ID is not provided, allow ID from JSON.
+        allocation_id = id if id is not None else data.get("id")
 
         if allocation_id is None:
             return JsonResponse({
