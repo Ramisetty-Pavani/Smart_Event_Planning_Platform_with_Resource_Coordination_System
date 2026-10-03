@@ -1,5 +1,6 @@
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
+from django.contrib.auth.decorators import login_required
 
 import json
 from datetime import datetime
@@ -7,8 +8,29 @@ from datetime import datetime
 from .models import Event
 
 
+def get_user_role(request):
+    if not request.user.is_authenticated:
+        return None
+
+    if request.user.is_superuser:
+        return "Admin"
+
+    try:
+        return request.user.userprofile.role
+    except Exception:
+        return None
+
+
 @csrf_exempt
+@login_required
 def event_list(request):
+
+    role = get_user_role(request)
+
+    if role is None:
+        return JsonResponse({
+            "message": "User role not found"
+        }, status=403)
 
     # =========================
     # GET - VIEW ALL EVENTS
@@ -42,6 +64,11 @@ def event_list(request):
             "events": event_data
         })
 
+    # Only Admin and Organizer can modify events
+    if role not in ["Admin", "Organizer"]:
+        return JsonResponse({
+            "message": "You do not have permission to modify events"
+        }, status=403)
 
     # =========================
     # POST - CREATE EVENT
@@ -63,7 +90,6 @@ def event_list(request):
         budget = data.get("budget")
         capacity = data.get("capacity")
 
-        # Required fields
         if not name or not name.strip():
             return JsonResponse({
                 "message": "Event name is required"
@@ -94,7 +120,6 @@ def event_list(request):
                 "message": "Budget is required"
             }, status=400)
 
-        # Date validation
         try:
             event_date = datetime.strptime(
                 date,
@@ -106,7 +131,6 @@ def event_list(request):
                 "message": "Date must be in YYYY-MM-DD format"
             }, status=400)
 
-        # Time validation
         try:
             event_start_time = datetime.strptime(
                 start_time,
@@ -123,13 +147,11 @@ def event_list(request):
                 "message": "Time must be in HH:MM format"
             }, status=400)
 
-        # Start time must be before end time
         if event_start_time >= event_end_time:
             return JsonResponse({
                 "message": "End time must be after start time"
             }, status=400)
 
-        # Budget validation
         try:
             event_budget = float(budget)
 
@@ -143,7 +165,6 @@ def event_list(request):
                 "message": "Budget must be greater than 0"
             }, status=400)
 
-        # Capacity validation
         event_capacity = None
 
         if capacity is not None:
@@ -160,7 +181,6 @@ def event_list(request):
                     "message": "Capacity must be greater than 0"
                 }, status=400)
 
-        # Venue conflict check
         location_conflict = Event.objects.filter(
             date=event_date,
             location__iexact=location.strip(),
@@ -176,7 +196,6 @@ def event_list(request):
                 )
             }, status=400)
 
-        # Create event
         event = Event.objects.create(
             name=name.strip(),
             date=event_date,
@@ -200,7 +219,6 @@ def event_list(request):
                 "capacity": event.capacity
             }
         }, status=201)
-
 
     # =========================
     # PUT - UPDATE EVENT
@@ -238,7 +256,6 @@ def event_list(request):
                 "message": "Event not found"
             }, status=404)
 
-        # Name
         if "name" in data:
 
             if not data["name"] or not data["name"].strip():
@@ -248,7 +265,6 @@ def event_list(request):
 
             event.name = data["name"].strip()
 
-        # Date
         if "date" in data:
 
             try:
@@ -262,7 +278,6 @@ def event_list(request):
                     "message": "Date must be in YYYY-MM-DD format"
                 }, status=400)
 
-        # Start time
         if "start_time" in data:
 
             try:
@@ -276,7 +291,6 @@ def event_list(request):
                     "message": "Start time must be in HH:MM format"
                 }, status=400)
 
-        # End time
         if "end_time" in data:
 
             try:
@@ -290,7 +304,6 @@ def event_list(request):
                     "message": "End time must be in HH:MM format"
                 }, status=400)
 
-        # Time conflict validation
         if event.start_time and event.end_time:
 
             if event.start_time >= event.end_time:
@@ -298,7 +311,6 @@ def event_list(request):
                     "message": "End time must be after start time"
                 }, status=400)
 
-        # Location
         if "location" in data:
 
             if not data["location"] or not data["location"].strip():
@@ -308,7 +320,6 @@ def event_list(request):
 
             event.location = data["location"].strip()
 
-        # Budget
         if "budget" in data:
 
             try:
@@ -326,7 +337,6 @@ def event_list(request):
 
             event.budget = new_budget
 
-        # Capacity
         if "capacity" in data:
 
             try:
@@ -342,7 +352,6 @@ def event_list(request):
                     "message": "Capacity must be greater than 0"
                 }, status=400)
 
-            # Check existing registrations
             from registrations.models import Registration
 
             active_registrations = Registration.objects.filter(
@@ -363,7 +372,6 @@ def event_list(request):
 
             event.capacity = new_capacity
 
-        # Venue conflict check during update
         if (
             event.start_time
             and event.end_time
@@ -387,7 +395,6 @@ def event_list(request):
                     )
                 }, status=400)
 
-        # Save changes
         event.save()
 
         return JsonResponse({
@@ -409,7 +416,6 @@ def event_list(request):
                 "capacity": event.capacity
             }
         })
-
 
     # =========================
     # DELETE - DELETE EVENT
@@ -453,10 +459,6 @@ def event_list(request):
             "message": "Event deleted successfully"
         })
 
-
-    # =========================
-    # OTHER METHODS
-    # =========================
     return JsonResponse({
         "message": "Method not allowed"
     }, status=405)

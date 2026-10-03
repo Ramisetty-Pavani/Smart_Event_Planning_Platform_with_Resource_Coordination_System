@@ -9,7 +9,13 @@ from notifications.views import create_notification
 
 
 ACTIVE_STATUSES = ["Pending", "Confirmed"]
-VALID_STATUSES = ["Pending", "Confirmed", "Completed", "Cancelled"]
+
+VALID_STATUSES = [
+    "Pending",
+    "Confirmed",
+    "Completed",
+    "Cancelled"
+]
 
 
 def check_vendor_conflict(
@@ -19,9 +25,20 @@ def check_vendor_conflict(
 ):
     """
     Checks whether the same vendor/company is already
-    assigned to another active event at overlapping time.
+    assigned during an overlapping time.
+
+    Rules:
+
+    1. Same event + overlapping time -> conflict
+    2. Different event + overlapping time -> conflict
+    3. Same event + non-overlapping time -> allowed
+    4. Different event + non-overlapping time -> allowed
+    5. Different dates -> allowed
+    6. Back-to-back timings -> allowed
     """
 
+    # If the event does not have timing information,
+    # time-based conflict checking cannot be performed.
     if not event.start_time or not event.end_time:
         return None
 
@@ -30,6 +47,8 @@ def check_vendor_conflict(
         status__in=ACTIVE_STATUSES
     )
 
+    # When editing a vendor, exclude the current
+    # vendor from its own conflict check.
     if exclude_vendor_id is not None:
         vendors = vendors.exclude(
             id=exclude_vendor_id
@@ -41,27 +60,52 @@ def check_vendor_conflict(
             existing_event = Event.objects.get(
                 id=vendor.event_id
             )
+
         except Event.DoesNotExist:
             continue
 
-        # Different dates cannot conflict
+        # Different dates cannot conflict.
         if existing_event.date != event.date:
             continue
 
-        # If existing event has no timing, skip conflict check
-        if not existing_event.start_time or not existing_event.end_time:
+        # If the existing event has no timing,
+        # skip time conflict checking.
+        if (
+            not existing_event.start_time
+            or not existing_event.end_time
+        ):
             continue
 
-        # Time overlap
+        # ------------------------------------------------
+        # TIME OVERLAP CHECK
+        # ------------------------------------------------
+        #
+        # Existing: 10:00 - 12:00
+        # New:      12:00 - 14:00
+        #
+        # These are back-to-back, so they are allowed.
+        #
+        # Existing: 10:00 - 12:00
+        # New:      11:00 - 13:00
+        #
+        # These overlap, so they conflict.
+        # ------------------------------------------------
+
         if (
-            existing_event.start_time < event.end_time
-            and existing_event.end_time > event.start_time
+            existing_event.end_time <= event.start_time
+            or existing_event.start_time >= event.end_time
         ):
-            return {
-                "vendor_id": vendor.id,
-                "event_id": existing_event.id,
-                "company": vendor.company
-            }
+            continue
+
+        # Overlap found.
+        return {
+            "vendor_id": vendor.id,
+            "event_id": existing_event.id,
+            "company": vendor.company,
+            "same_event": (
+                existing_event.id == event.id
+            )
+        }
 
     return None
 
@@ -69,9 +113,10 @@ def check_vendor_conflict(
 @csrf_exempt
 def vendor_list(request):
 
-    # =========================
+    # ==================================================
     # GET
-    # =========================
+    # ==================================================
+
     if request.method == "GET":
 
         vendors = Vendor.objects.all().order_by("-id")
@@ -95,9 +140,10 @@ def vendor_list(request):
             "vendors": vendor_data
         })
 
-    # =========================
+    # ==================================================
     # POST
-    # =========================
+    # ==================================================
+
     elif request.method == "POST":
 
         try:
@@ -113,9 +159,15 @@ def vendor_list(request):
         company = data.get("company")
         service = data.get("service")
         cost = data.get("cost")
-        status = data.get("status", "Pending")
+        status = data.get(
+            "status",
+            "Pending"
+        )
 
-        # Required fields
+        # ------------------------------------------------
+        # REQUIRED FIELDS
+        # ------------------------------------------------
+
         if event_id is None:
             return JsonResponse({
                 "message": "Event id is required"
@@ -141,7 +193,10 @@ def vendor_list(request):
                 "message": "Vendor cost is required"
             }, status=400)
 
-        # Event ID
+        # ------------------------------------------------
+        # EVENT ID
+        # ------------------------------------------------
+
         try:
             event_id = int(event_id)
 
@@ -155,7 +210,10 @@ def vendor_list(request):
                 "message": "Event id must be greater than 0"
             }, status=400)
 
-        # Event existence
+        # ------------------------------------------------
+        # EVENT EXISTENCE
+        # ------------------------------------------------
+
         try:
             event = Event.objects.get(
                 id=event_id
@@ -166,7 +224,10 @@ def vendor_list(request):
                 "message": "Event not found"
             }, status=404)
 
-        # Cost
+        # ------------------------------------------------
+        # COST
+        # ------------------------------------------------
+
         try:
             vendor_cost = float(cost)
 
@@ -180,7 +241,10 @@ def vendor_list(request):
                 "message": "Cost must be greater than 0"
             }, status=400)
 
-        # Status
+        # ------------------------------------------------
+        # STATUS
+        # ------------------------------------------------
+
         if status not in VALID_STATUSES:
             return JsonResponse({
                 "message": (
@@ -189,9 +253,9 @@ def vendor_list(request):
                 )
             }, status=400)
 
-        # =========================
-        # VENDOR CONFLICT
-        # =========================
+        # ==================================================
+        # VENDOR CONFLICT CHECK
+        # ==================================================
 
         conflict = check_vendor_conflict(
             company,
@@ -200,6 +264,7 @@ def vendor_list(request):
 
         if conflict:
 
+            # Create notification
             try:
                 create_notification(
                     event_id,
@@ -209,20 +274,40 @@ def vendor_list(request):
                         + company.strip()
                     )
                 )
+
             except Exception:
                 pass
 
-            return JsonResponse({
-                "message": (
+            # Different message for same event
+            # and different event.
+            if conflict["same_event"]:
+
+                conflict_message = (
+                    "Vendor conflict: this vendor is already "
+                    "assigned to the same event during the same time"
+                )
+
+            else:
+
+                conflict_message = (
                     "Vendor conflict: this vendor is already "
                     "assigned to another event during the same time"
-                ),
-                "conflicting_vendor_id": conflict["vendor_id"],
-                "conflicting_event_id": conflict["event_id"],
-                "company": conflict["company"]
+                )
+
+            return JsonResponse({
+                "message": conflict_message,
+                "conflicting_vendor_id":
+                    conflict["vendor_id"],
+                "conflicting_event_id":
+                    conflict["event_id"],
+                "company":
+                    conflict["company"]
             }, status=400)
 
-        # Create vendor
+        # ==================================================
+        # CREATE VENDOR
+        # ==================================================
+
         vendor = Vendor.objects.create(
             event_id=event_id,
             name=name.strip(),
@@ -232,7 +317,10 @@ def vendor_list(request):
             status=status
         )
 
-        # Notification for confirmed vendor
+        # ------------------------------------------------
+        # CONFIRMED VENDOR NOTIFICATION
+        # ------------------------------------------------
+
         if status == "Confirmed":
 
             try:
@@ -244,6 +332,7 @@ def vendor_list(request):
                         + company.strip()
                     )
                 )
+
             except Exception:
                 pass
 
@@ -260,9 +349,10 @@ def vendor_list(request):
             }
         }, status=201)
 
-    # =========================
+    # ==================================================
     # PUT
-    # =========================
+    # ==================================================
+
     elif request.method == "PUT":
 
         try:
@@ -280,6 +370,10 @@ def vendor_list(request):
                 "message": "Vendor id is required"
             }, status=400)
 
+        # ------------------------------------------------
+        # VENDOR ID
+        # ------------------------------------------------
+
         try:
             vendor_id = int(vendor_id)
 
@@ -287,6 +381,10 @@ def vendor_list(request):
             return JsonResponse({
                 "message": "Vendor id must be a valid number"
             }, status=400)
+
+        # ------------------------------------------------
+        # FIND VENDOR
+        # ------------------------------------------------
 
         try:
             vendor = Vendor.objects.get(
@@ -298,15 +396,27 @@ def vendor_list(request):
                 "message": "Vendor not found"
             }, status=404)
 
-        # Event
+        # ==================================================
+        # EVENT
+        # ==================================================
+
         if "event_id" in data:
 
             try:
-                new_event_id = int(data["event_id"])
+                new_event_id = int(
+                    data["event_id"]
+                )
 
             except (ValueError, TypeError):
                 return JsonResponse({
-                    "message": "Event id must be a valid number"
+                    "message":
+                        "Event id must be a valid number"
+                }, status=400)
+
+            if new_event_id <= 0:
+                return JsonResponse({
+                    "message":
+                        "Event id must be greater than 0"
                 }, status=400)
 
             try:
@@ -330,58 +440,90 @@ def vendor_list(request):
 
             except Event.DoesNotExist:
                 return JsonResponse({
-                    "message": "Vendor's event not found"
+                    "message":
+                        "Vendor's event not found"
                 }, status=404)
 
-        # Name
+        # ==================================================
+        # NAME
+        # ==================================================
+
         if "name" in data:
 
-            if not data["name"] or not data["name"].strip():
+            if (
+                not data["name"]
+                or not data["name"].strip()
+            ):
                 return JsonResponse({
-                    "message": "Vendor name cannot be empty"
+                    "message":
+                        "Vendor name cannot be empty"
                 }, status=400)
 
             vendor.name = data["name"].strip()
 
-        # Company
+        # ==================================================
+        # COMPANY
+        # ==================================================
+
         if "company" in data:
 
-            if not data["company"] or not data["company"].strip():
+            if (
+                not data["company"]
+                or not data["company"].strip()
+            ):
                 return JsonResponse({
-                    "message": "Vendor company cannot be empty"
+                    "message":
+                        "Vendor company cannot be empty"
                 }, status=400)
 
             vendor.company = data["company"].strip()
 
-        # Service
+        # ==================================================
+        # SERVICE
+        # ==================================================
+
         if "service" in data:
 
-            if not data["service"] or not data["service"].strip():
+            if (
+                not data["service"]
+                or not data["service"].strip()
+            ):
                 return JsonResponse({
-                    "message": "Vendor service cannot be empty"
+                    "message":
+                        "Vendor service cannot be empty"
                 }, status=400)
 
             vendor.service = data["service"].strip()
 
-        # Cost
+        # ==================================================
+        # COST
+        # ==================================================
+
         if "cost" in data:
 
             try:
-                new_cost = float(data["cost"])
+                new_cost = float(
+                    data["cost"]
+                )
 
             except (ValueError, TypeError):
                 return JsonResponse({
-                    "message": "Cost must be a valid number"
+                    "message":
+                        "Cost must be a valid number"
                 }, status=400)
 
             if new_cost <= 0:
                 return JsonResponse({
-                    "message": "Cost must be greater than 0"
+                    "message":
+                        "Cost must be greater than 0"
                 }, status=400)
 
             vendor.cost = new_cost
 
-        # Status
+        # ==================================================
+        # STATUS
+        # ==================================================
+
         old_status = vendor.status
 
         if "status" in data:
@@ -398,11 +540,12 @@ def vendor_list(request):
 
             vendor.status = new_status
 
-        # =========================
-        # CHECK VENDOR CONFLICT
-        # =========================
+        # ==================================================
+        # VENDOR CONFLICT CHECK
+        # ==================================================
 
-        # Only active vendors create conflicts
+        # Only active vendors participate
+        # in conflict checking.
         if vendor.status in ACTIVE_STATUSES:
 
             conflict = check_vendor_conflict(
@@ -418,25 +561,48 @@ def vendor_list(request):
                         vendor.event_id,
                         "Vendor",
                         (
-                            "Vendor conflict detected while "
-                            "updating vendor"
+                            "Vendor conflict detected "
+                            "while updating vendor"
                         )
                     )
+
                 except Exception:
                     pass
 
+                if conflict["same_event"]:
+
+                    conflict_message = (
+                        "Vendor conflict: this vendor is "
+                        "already assigned to the same event "
+                        "during the same time"
+                    )
+
+                else:
+
+                    conflict_message = (
+                        "Vendor conflict: this vendor is "
+                        "already assigned to another event "
+                        "during the same time"
+                    )
+
                 return JsonResponse({
-                    "message": (
-                        "Vendor conflict: this vendor is already "
-                        "assigned to another event during the same time"
-                    ),
-                    "conflicting_vendor_id": conflict["vendor_id"],
-                    "conflicting_event_id": conflict["event_id"]
+                    "message": conflict_message,
+                    "conflicting_vendor_id":
+                        conflict["vendor_id"],
+                    "conflicting_event_id":
+                        conflict["event_id"]
                 }, status=400)
+
+        # ==================================================
+        # SAVE
+        # ==================================================
 
         vendor.save()
 
-        # Notification when vendor becomes confirmed
+        # ==================================================
+        # CONFIRMED NOTIFICATION
+        # ==================================================
+
         if (
             old_status != "Confirmed"
             and vendor.status == "Confirmed"
@@ -451,6 +617,7 @@ def vendor_list(request):
                         + vendor.company
                     )
                 )
+
             except Exception:
                 pass
 
@@ -467,9 +634,10 @@ def vendor_list(request):
             }
         })
 
-    # =========================
+    # ==================================================
     # DELETE
-    # =========================
+    # ==================================================
+
     elif request.method == "DELETE":
 
         try:
@@ -487,13 +655,22 @@ def vendor_list(request):
                 "message": "Vendor id is required"
             }, status=400)
 
+        # ------------------------------------------------
+        # VENDOR ID
+        # ------------------------------------------------
+
         try:
             vendor_id = int(vendor_id)
 
         except (ValueError, TypeError):
             return JsonResponse({
-                "message": "Vendor id must be a valid number"
+                "message":
+                    "Vendor id must be a valid number"
             }, status=400)
+
+        # ------------------------------------------------
+        # FIND VENDOR
+        # ------------------------------------------------
 
         try:
             vendor = Vendor.objects.get(
@@ -505,11 +682,20 @@ def vendor_list(request):
                 "message": "Vendor not found"
             }, status=404)
 
+        # ------------------------------------------------
+        # DELETE
+        # ------------------------------------------------
+
         vendor.delete()
 
         return JsonResponse({
-            "message": "Vendor deleted successfully"
+            "message":
+                "Vendor deleted successfully"
         })
+
+    # ==================================================
+    # METHOD NOT ALLOWED
+    # ==================================================
 
     return JsonResponse({
         "message": "Method not allowed"

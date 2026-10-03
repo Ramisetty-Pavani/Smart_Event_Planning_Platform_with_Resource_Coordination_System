@@ -1,8 +1,10 @@
-from django.http import JsonResponse
-from django.views.decorators.csrf import csrf_exempt
-
+import qrcode
 import json
 import re
+
+from django.http import JsonResponse, HttpResponse
+from django.views.decorators.csrf import csrf_exempt
+from django.utils import timezone
 
 from .models import Registration
 from events.models import Event
@@ -15,11 +17,13 @@ def registration_list(request):
     # =========================
     # GET - VIEW REGISTRATIONS
     # =========================
+
     if request.method == "GET":
 
         event_id = request.GET.get("event_id")
 
         if event_id:
+
             try:
                 event_id = int(event_id)
             except (ValueError, TypeError):
@@ -32,11 +36,13 @@ def registration_list(request):
             ).order_by("-id")
 
         else:
+
             registrations = Registration.objects.all().order_by("-id")
 
         registration_data = []
 
         for registration in registrations:
+
             registration_data.append({
                 "id": registration.id,
                 "event_id": registration.event_id,
@@ -52,15 +58,14 @@ def registration_list(request):
             "registrations": registration_data
         })
 
-
     # =========================
     # POST - NEW REGISTRATION
     # =========================
+
     elif request.method == "POST":
 
         try:
             data = json.loads(request.body)
-
         except json.JSONDecodeError:
             return JsonResponse({
                 "message": "Invalid JSON data"
@@ -71,7 +76,10 @@ def registration_list(request):
         email = data.get("email")
         phone = data.get("phone")
 
-        # Required fields
+        # =========================
+        # REQUIRED FIELDS
+        # =========================
+
         if event_id is None:
             return JsonResponse({
                 "message": "Event id is required"
@@ -92,10 +100,12 @@ def registration_list(request):
                 "message": "Phone number is required"
             }, status=400)
 
-        # Event ID validation
+        # =========================
+        # EVENT ID VALIDATION
+        # =========================
+
         try:
             event_id = int(event_id)
-
         except (ValueError, TypeError):
             return JsonResponse({
                 "message": "Event id must be a valid number"
@@ -106,19 +116,50 @@ def registration_list(request):
                 "message": "Event id must be greater than 0"
             }, status=400)
 
-        # Check event
+        # =========================
+        # CHECK EVENT
+        # =========================
+
         try:
             event = Event.objects.get(id=event_id)
-
         except Event.DoesNotExist:
             return JsonResponse({
                 "message": "Event not found"
             }, status=404)
 
-        # Normalize email
+        # =========================
+        # EVENT COMPLETION CHECK
+        # =========================
+
+        current_date = timezone.localdate()
+        current_time = timezone.localtime().time()
+
+        # Event date has already passed
+        if event.date < current_date:
+            return JsonResponse({
+                "message": "Registration is closed. This event has already been completed."
+            }, status=400)
+
+        # Event is today and has already ended
+        if (
+            event.date == current_date
+            and event.end_time is not None
+            and current_time >= event.end_time
+        ):
+            return JsonResponse({
+                "message": "Registration is closed. This event has already ended."
+            }, status=400)
+
+        # =========================
+        # NORMALIZE EMAIL
+        # =========================
+
         email = email.strip().lower()
 
-        # Email validation
+        # =========================
+        # EMAIL VALIDATION
+        # =========================
+
         email_pattern = r"^[^\s@]+@[^\s@]+\.[^\s@]+$"
 
         if not re.match(email_pattern, email):
@@ -126,7 +167,10 @@ def registration_list(request):
                 "message": "Invalid email address"
             }, status=400)
 
-        # Phone validation
+        # =========================
+        # PHONE VALIDATION
+        # =========================
+
         phone = str(phone).strip()
 
         if not phone.isdigit():
@@ -187,7 +231,10 @@ def registration_list(request):
             attendance="Not Marked"
         )
 
-        # Notification
+        # =========================
+        # NOTIFICATION
+        # =========================
+
         try:
             create_notification(
                 event_id,
@@ -210,15 +257,14 @@ def registration_list(request):
             }
         }, status=201)
 
-
     # =========================
     # PUT - UPDATE REGISTRATION
     # =========================
+
     elif request.method == "PUT":
 
         try:
             data = json.loads(request.body)
-
         except json.JSONDecodeError:
             return JsonResponse({
                 "message": "Invalid JSON data"
@@ -233,7 +279,6 @@ def registration_list(request):
 
         try:
             registration_id = int(registration_id)
-
         except (ValueError, TypeError):
             return JsonResponse({
                 "message": "Registration id must be a valid number"
@@ -243,7 +288,6 @@ def registration_list(request):
             registration = Registration.objects.get(
                 id=registration_id
             )
-
         except Registration.DoesNotExist:
             return JsonResponse({
                 "message": "Registration not found"
@@ -342,7 +386,10 @@ def registration_list(request):
 
             old_status = registration.status
 
-            # Re-registering a cancelled person
+            # =========================
+            # REACTIVATE CANCELLED REGISTRATION
+            # =========================
+
             if (
                 old_status == "Cancelled"
                 and new_status != "Cancelled"
@@ -352,6 +399,31 @@ def registration_list(request):
                     id=registration.event_id
                 )
 
+                # Check whether event is completed
+                current_date = timezone.localdate()
+                current_time = timezone.localtime().time()
+
+                if event.date < current_date:
+                    return JsonResponse({
+                        "message": (
+                            "Cannot reactivate registration. "
+                            "This event has already been completed."
+                        )
+                    }, status=400)
+
+                if (
+                    event.date == current_date
+                    and event.end_time is not None
+                    and current_time >= event.end_time
+                ):
+                    return JsonResponse({
+                        "message": (
+                            "Cannot reactivate registration. "
+                            "This event has already ended."
+                        )
+                    }, status=400)
+
+                # Capacity check
                 if event.capacity is not None:
 
                     active_registrations = Registration.objects.filter(
@@ -425,15 +497,14 @@ def registration_list(request):
             }
         })
 
-
     # =========================
     # DELETE - CANCEL
     # =========================
+
     elif request.method == "DELETE":
 
         try:
             data = json.loads(request.body)
-
         except json.JSONDecodeError:
             return JsonResponse({
                 "message": "Invalid JSON data"
@@ -448,7 +519,6 @@ def registration_list(request):
 
         try:
             registration_id = int(registration_id)
-
         except (ValueError, TypeError):
             return JsonResponse({
                 "message": "Registration id must be a valid number"
@@ -458,7 +528,6 @@ def registration_list(request):
             registration = Registration.objects.get(
                 id=registration_id
             )
-
         except Registration.DoesNotExist:
             return JsonResponse({
                 "message": "Registration not found"
@@ -467,13 +536,13 @@ def registration_list(request):
         # Soft delete: keep the record but cancel it
         registration.status = "Cancelled"
         registration.attendance = "Not Marked"
+
         registration.save()
 
         return JsonResponse({
             "message": "Registration cancelled successfully",
             "registration_id": registration.id
         })
-
 
     # =========================
     # METHOD NOT ALLOWED
@@ -498,7 +567,6 @@ def set_event_capacity(request):
 
     try:
         data = json.loads(request.body)
-
     except json.JSONDecodeError:
         return JsonResponse({
             "message": "Invalid JSON data"
@@ -520,7 +588,6 @@ def set_event_capacity(request):
     try:
         event_id = int(event_id)
         capacity = int(capacity)
-
     except (ValueError, TypeError):
         return JsonResponse({
             "message": "Event id and capacity must be valid numbers"
@@ -538,7 +605,6 @@ def set_event_capacity(request):
 
     try:
         event = Event.objects.get(id=event_id)
-
     except Event.DoesNotExist:
         return JsonResponse({
             "message": "Event not found"
@@ -569,3 +635,155 @@ def set_event_capacity(request):
         "capacity": event.capacity,
         "current_registrations": active_registrations
     })
+
+
+# =====================================================
+# SCAN QR AND MARK ATTENDANCE
+# =====================================================
+
+@csrf_exempt
+def scan_attendance(request):
+
+    if request.method != "POST":
+        return JsonResponse({
+            "message": "Method not allowed"
+        }, status=405)
+
+    try:
+        data = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({
+            "message": "Invalid JSON data"
+        }, status=400)
+
+    qr_token = data.get("qr_token")
+    event_id = data.get("event_id")
+
+    if not qr_token:
+        return JsonResponse({
+            "message": "QR token is required"
+        }, status=400)
+
+    if event_id is None:
+        return JsonResponse({
+            "message": "Event id is required"
+        }, status=400)
+
+    try:
+        event_id = int(event_id)
+    except (ValueError, TypeError):
+        return JsonResponse({
+            "message": "Event id must be a valid number"
+        }, status=400)
+
+    if event_id <= 0:
+        return JsonResponse({
+            "message": "Event id must be greater than 0"
+        }, status=400)
+
+    try:
+        Event.objects.get(id=event_id)
+    except Event.DoesNotExist:
+        return JsonResponse({
+            "message": "Event not found"
+        }, status=404)
+
+    try:
+        registration = Registration.objects.get(
+            qr_token=qr_token
+        )
+    except Registration.DoesNotExist:
+        return JsonResponse({
+            "message": "Invalid QR code"
+        }, status=404)
+
+    if registration.event_id != event_id:
+        return JsonResponse({
+            "message": "This QR code does not belong to this event"
+        }, status=400)
+
+    if registration.status == "Cancelled":
+        return JsonResponse({
+            "message": "Cancelled registration cannot be marked as Present"
+        }, status=400)
+
+    if registration.attendance == "Present":
+        return JsonResponse({
+            "message": "Attendance already marked",
+            "registration_id": registration.id,
+            "name": registration.name,
+            "attendance": registration.attendance
+        }, status=400)
+
+    registration.attendance = "Present"
+
+    registration.save(
+        update_fields=["attendance"]
+    )
+
+    try:
+        create_notification(
+            event_id,
+            "Attendance",
+            "Attendance marked for " + registration.name
+        )
+    except Exception:
+        pass
+
+    return JsonResponse({
+        "message": "Attendance marked successfully",
+        "registration": {
+            "id": registration.id,
+            "event_id": registration.event_id,
+            "name": registration.name,
+            "email": registration.email,
+            "status": registration.status,
+            "attendance": registration.attendance
+        }
+    })
+
+
+# =====================================================
+# GENERATE QR CODE
+# =====================================================
+
+def generate_qr(request, registration_id):
+
+    try:
+        registration = Registration.objects.get(
+            id=registration_id
+        )
+    except Registration.DoesNotExist:
+        return JsonResponse({
+            "message": "Registration not found"
+        }, status=404)
+
+    if not registration.qr_token:
+        return JsonResponse({
+            "message": "QR token is not available"
+        }, status=400)
+
+    qr_data = str(registration.qr_token)
+
+    qr = qrcode.QRCode(
+        version=1,
+        error_correction=qrcode.constants.ERROR_CORRECT_M,
+        box_size=10,
+        border=4
+    )
+
+    qr.add_data(qr_data)
+    qr.make(fit=True)
+
+    image = qr.make_image()
+
+    response = HttpResponse(
+        content_type="image/png"
+    )
+
+    image.save(
+        response,
+        format="PNG"
+    )
+
+    return response

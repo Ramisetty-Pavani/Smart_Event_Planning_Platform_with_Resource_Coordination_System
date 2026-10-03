@@ -4,3 +4,6 @@ __pycache__/
 db.sqlite3
 .env
 .vscode/
+
+smart_event_frontend/node_modules/
+smart_event_frontend/dist/
