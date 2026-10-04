@@ -1,3 +1,4 @@
+
 """
 Django settings for config project.
 
@@ -11,24 +12,39 @@ https://docs.djangoproject.com/en/6.1/ref/settings/
 """
 
 from pathlib import Path
+import os
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
-# Quick-start development settings - unsuitable for production
-# See https://docs.djangoproject.com/en/6.1/howto/deployment/checklist/
+# ============================================================
+# SECURITY SETTINGS
+# ============================================================
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-&*v+(ww8dkg_pygy-0clcuw=zunw7jz3p&ux&^tgp94%vn#(#='
+# In production, SECRET_KEY will be provided by Render
+# through an environment variable.
+SECRET_KEY = os.environ.get(
+    "SECRET_KEY",
+    "django-insecure-development-key"
+)
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+# DEBUG is True locally by default.
+# Render will set DEBUG=False through environment variables.
+DEBUG = os.environ.get("DEBUG", "True") == "True"
 
-ALLOWED_HOSTS = []
+# Hosts allowed to access this Django application.
+# Example Render value:
+# your-service-name.onrender.com
+ALLOWED_HOSTS = os.environ.get(
+    "ALLOWED_HOSTS",
+    "localhost,127.0.0.1"
+).split(",")
 
 
-# Application definition
+# ============================================================
+# APPLICATION DEFINITION
+# ============================================================
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -37,6 +53,8 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+
+    # Project apps
     'events',
     'expenses',
     'sponsors',
@@ -49,9 +67,16 @@ INSTALLED_APPS = [
     'notifications',
     'alerts',
     'dashboard',
-    "corsheaders",
-    "accounts",
+    'accounts',
+
+    # Third-party apps
+    'corsheaders',
 ]
+
+
+# ============================================================
+# MIDDLEWARE
+# ============================================================
 
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
@@ -64,7 +89,17 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
+
+# ============================================================
+# URL CONFIGURATION
+# ============================================================
+
 ROOT_URLCONF = 'config.urls'
+
+
+# ============================================================
+# TEMPLATES
+# ============================================================
 
 TEMPLATES = [
     {
@@ -81,11 +116,24 @@ TEMPLATES = [
     },
 ]
 
+
+# ============================================================
+# WSGI
+# ============================================================
+
 WSGI_APPLICATION = 'config.wsgi.application'
 
 
-# Database
-# https://docs.djangoproject.com/en/6.1/ref/settings/#databases
+# ============================================================
+# DATABASE
+# ============================================================
+
+# Currently using SQLite.
+#
+# IMPORTANT:
+# SQLite is suitable for development/demo deployment.
+# Render's normal filesystem is not persistent on the Free plan,
+# so database data may be lost after certain redeployments/replacements.
 
 DATABASES = {
     'default': {
@@ -95,8 +143,9 @@ DATABASES = {
 }
 
 
-# Password validation
-# https://docs.djangoproject.com/en/6.1/ref/settings/#auth-password-validators
+# ============================================================
+# PASSWORD VALIDATION
+# ============================================================
 
 AUTH_PASSWORD_VALIDATORS = [
     {
@@ -114,8 +163,9 @@ AUTH_PASSWORD_VALIDATORS = [
 ]
 
 
-# Internationalization
-# https://docs.djangoproject.com/en/6.1/topics/i18n/
+# ============================================================
+# INTERNATIONALIZATION
+# ============================================================
 
 LANGUAGE_CODE = 'en-us'
 
@@ -126,22 +176,69 @@ USE_I18N = True
 USE_TZ = True
 
 
-# Static files (CSS, JavaScript, Images)
-# https://docs.djangoproject.com/en/6.1/howto/static-files/
+# ============================================================
+# STATIC FILES
+# ============================================================
 
 STATIC_URL = 'static/'
 
+# Required for collecting static files during deployment.
+STATIC_ROOT = BASE_DIR / 'staticfiles'
 
-# Email
-# https://docs.djangoproject.com/en/6.1/topics/email/#topic-email-configuration
+
+# ============================================================
+# DEFAULT PRIMARY KEY
+# ============================================================
+
+DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+
+# ============================================================
+# EMAIL
+# ============================================================
+
+# Development email backend.
+# Emails will be printed in the terminal instead of actually
+# being sent.
 
 MAILERS = {
     'default': {
         'BACKEND': 'django.core.mail.backends.console.EmailBackend',
     },
 }
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:5173",
-]
+
+
+# ============================================================
+# CORS
+# ============================================================
+
+# Locally:
+# http://localhost:5173
+#
+# Later, when your frontend is deployed, we can set:
+# CORS_ALLOWED_ORIGINS
+# in Render environment variables.
+
+CORS_ALLOWED_ORIGINS = os.environ.get(
+    "CORS_ALLOWED_ORIGINS",
+    "http://localhost:5173"
+).split(",")
+
 CORS_ALLOW_CREDENTIALS = True
-# Development email backend
+
+
+# ============================================================
+# CSRF
+# ============================================================
+
+# Local development default.
+#
+# Later, after Render gives you your backend URL, we can add
+# the production URL through the CSRF_TRUSTED_ORIGINS
+# environment variable.
+
+CSRF_TRUSTED_ORIGINS = os.environ.get(
+    "CSRF_TRUSTED_ORIGINS",
+    ""
+).split(",") if os.environ.get("CSRF_TRUSTED_ORIGINS") else []
+
