@@ -7,3 +7,4 @@ db.sqlite3
 
 smart_event_frontend/node_modules/
 smart_event_frontend/dist/
+db_backup_before_deployment.sqlite3
