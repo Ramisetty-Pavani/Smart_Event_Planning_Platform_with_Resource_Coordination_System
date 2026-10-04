@@ -5,6 +5,7 @@ import json
 
 from .models import Approval
 from notifications.views import create_notification
+from events.models import Event
 
 
 ALLOWED_TYPES = [
@@ -21,6 +22,18 @@ ALLOWED_STATUS = [
 ]
 
 
+def get_event_name(event_id):
+
+    try:
+        event = Event.objects.get(
+            id=event_id
+        )
+        return event.name
+
+    except Event.DoesNotExist:
+        return "Unknown Event"
+
+
 @csrf_exempt
 def approval_list(request):
 
@@ -31,6 +44,7 @@ def approval_list(request):
         result = []
 
         for approval in approvals:
+
             result.append({
                 "id": approval.id,
                 "event_id": approval.event_id,
@@ -49,7 +63,9 @@ def approval_list(request):
 
         try:
             data = json.loads(request.body)
+
         except json.JSONDecodeError:
+
             return JsonResponse({
                 "message": "Invalid JSON data"
             }, status=400)
@@ -60,38 +76,47 @@ def approval_list(request):
         requested_by = data.get("requested_by")
 
         if event_id is None:
+
             return JsonResponse({
                 "message": "event_id is required"
             }, status=400)
 
         if request_type is None:
+
             return JsonResponse({
                 "message": "request_type is required"
             }, status=400)
 
         if not description or not description.strip():
+
             return JsonResponse({
                 "message": "description is required"
             }, status=400)
 
         if not requested_by or not requested_by.strip():
+
             return JsonResponse({
                 "message": "requested_by is required"
             }, status=400)
 
         try:
+
             event_id = int(event_id)
+
         except (ValueError, TypeError):
+
             return JsonResponse({
                 "message": "event_id must be a valid number"
             }, status=400)
 
         if event_id <= 0:
+
             return JsonResponse({
                 "message": "event_id must be greater than 0"
             }, status=400)
 
         if request_type not in ALLOWED_TYPES:
+
             return JsonResponse({
                 "message": "Invalid request_type",
                 "allowed_types": ALLOWED_TYPES
@@ -128,8 +153,11 @@ def approval_list(request):
     elif request.method == "PUT":
 
         try:
+
             data = json.loads(request.body)
+
         except json.JSONDecodeError:
+
             return JsonResponse({
                 "message": "Invalid JSON data"
             }, status=400)
@@ -137,47 +165,69 @@ def approval_list(request):
         approval_id = data.get("id")
 
         if approval_id is None:
+
             return JsonResponse({
                 "message": "Approval id is required"
             }, status=400)
 
         try:
+
             approval_id = int(approval_id)
+
         except (ValueError, TypeError):
+
             return JsonResponse({
                 "message": "Approval id must be a valid number"
             }, status=400)
 
         try:
+
             approval = Approval.objects.get(
                 id=approval_id
             )
+
         except Approval.DoesNotExist:
+
             return JsonResponse({
                 "message": "Approval not found"
             }, status=404)
 
+        old_status = approval.status
+
         if "description" in data:
 
-            if not data["description"] or not data["description"].strip():
+            if (
+                not data["description"]
+                or not data["description"].strip()
+            ):
+
                 return JsonResponse({
                     "message": "Description cannot be empty"
                 }, status=400)
 
-            approval.description = data["description"].strip()
+            approval.description = (
+                data["description"].strip()
+            )
 
         if "requested_by" in data:
 
-            if not data["requested_by"] or not data["requested_by"].strip():
+            if (
+                not data["requested_by"]
+                or not data["requested_by"].strip()
+            ):
+
                 return JsonResponse({
                     "message": "requested_by cannot be empty"
                 }, status=400)
 
-            approval.requested_by = data["requested_by"].strip()
+            approval.requested_by = (
+                data["requested_by"].strip()
+            )
 
         if "request_type" in data:
 
             if data["request_type"] not in ALLOWED_TYPES:
+
                 return JsonResponse({
                     "message": "Invalid request_type",
                     "allowed_types": ALLOWED_TYPES
@@ -188,30 +238,81 @@ def approval_list(request):
         if "event_id" in data:
 
             try:
-                new_event_id = int(data["event_id"])
+
+                new_event_id = int(
+                    data["event_id"]
+                )
+
             except (ValueError, TypeError):
+
                 return JsonResponse({
                     "message": "event_id must be a valid number"
                 }, status=400)
 
             if new_event_id <= 0:
+
                 return JsonResponse({
                     "message": "event_id must be greater than 0"
                 }, status=400)
 
             approval.event_id = new_event_id
 
+        status_changed = False
+
         if "status" in data:
 
             if data["status"] not in ALLOWED_STATUS:
+
                 return JsonResponse({
                     "message": "Invalid status",
                     "allowed_status": ALLOWED_STATUS
                 }, status=400)
 
-            approval.status = data["status"]
+            new_status = data["status"]
+
+            if new_status != old_status:
+
+                status_changed = True
+
+            approval.status = new_status
 
         approval.save()
+
+        if status_changed:
+
+            event_name = get_event_name(
+                approval.event_id
+            )
+
+            if approval.status == "Approved":
+
+                message = (
+                    "Approval approved: "
+                    + approval.request_type
+                    + " request for "
+                    + event_name
+                )
+
+                create_notification(
+                    approval.event_id,
+                    "Approval",
+                    message
+                )
+
+            elif approval.status == "Rejected":
+
+                message = (
+                    "Approval rejected: "
+                    + approval.request_type
+                    + " request for "
+                    + event_name
+                )
+
+                create_notification(
+                    approval.event_id,
+                    "Approval",
+                    message
+                )
 
         return JsonResponse({
             "message": "Approval updated successfully",
@@ -228,8 +329,11 @@ def approval_list(request):
     elif request.method == "DELETE":
 
         try:
+
             data = json.loads(request.body)
+
         except json.JSONDecodeError:
+
             return JsonResponse({
                 "message": "Invalid JSON data"
             }, status=400)
@@ -237,22 +341,29 @@ def approval_list(request):
         approval_id = data.get("id")
 
         if approval_id is None:
+
             return JsonResponse({
                 "message": "Approval id is required"
             }, status=400)
 
         try:
+
             approval_id = int(approval_id)
+
         except (ValueError, TypeError):
+
             return JsonResponse({
                 "message": "Approval id must be a valid number"
             }, status=400)
 
         try:
+
             approval = Approval.objects.get(
                 id=approval_id
             )
+
         except Approval.DoesNotExist:
+
             return JsonResponse({
                 "message": "Approval not found"
             }, status=404)

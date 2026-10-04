@@ -6,6 +6,13 @@ import json
 from datetime import datetime
 
 from .models import Event
+from registrations.models import Registration
+from allocations.models import Allocation
+from resources.models import Resource
+from vendors.models import Vendor
+from vendors.views import check_vendor_conflict
+from notifications.views import create_notification
+from dashboard.models import ConflictRecord
 
 
 def get_user_role(request):
@@ -19,6 +26,163 @@ def get_user_role(request):
         return request.user.userprofile.role
     except Exception:
         return None
+
+
+def times_overlap(start1, end1, start2, end2):
+    return start1 < end2 and end1 > start2
+
+
+def send_event_notification(event_id, message):
+    try:
+        create_notification(
+            event_id,
+            "Event",
+            message
+        )
+    except Exception:
+        pass
+
+
+def check_resource_conflicts_for_event(
+    event,
+    new_date,
+    new_start_time,
+    new_end_time
+):
+    """
+    Re-check all resources already allocated to an event
+    against other events after a date/time change.
+
+    Returns a conflict dictionary if a conflict is found.
+    Otherwise returns None.
+    """
+
+    allocations = Allocation.objects.filter(
+        event_id=event.id
+    )
+
+    for allocation in allocations:
+
+        try:
+            resource = Resource.objects.get(
+                id=allocation.resource_id
+            )
+
+        except Resource.DoesNotExist:
+            continue
+
+        overlapping_quantity = 0
+        conflicting_event_ids = []
+
+        other_allocations = Allocation.objects.filter(
+            resource_id=allocation.resource_id
+        ).exclude(
+            event_id=event.id
+        )
+
+        for other_allocation in other_allocations:
+
+            try:
+                other_event = Event.objects.get(
+                    id=other_allocation.event_id
+                )
+
+            except Event.DoesNotExist:
+                continue
+
+            if other_event.date != new_date:
+                continue
+
+            if (
+                other_event.start_time is None
+                or other_event.end_time is None
+            ):
+                continue
+
+            if new_start_time is None or new_end_time is None:
+                continue
+
+            if times_overlap(
+                other_event.start_time,
+                other_event.end_time,
+                new_start_time,
+                new_end_time
+            ):
+
+                overlapping_quantity += (
+                    other_allocation.quantity
+                )
+
+                if (
+                    other_allocation.event_id
+                    not in conflicting_event_ids
+                ):
+                    conflicting_event_ids.append(
+                        other_allocation.event_id
+                    )
+
+        total_required = (
+            overlapping_quantity
+            + allocation.quantity
+        )
+
+        if total_required > resource.quantity:
+
+            return {
+                "resource": resource,
+                "allocation": allocation,
+                "already_required": overlapping_quantity,
+                "requested": allocation.quantity,
+                "total_required": total_required,
+                "conflicting_event_ids": (
+                    conflicting_event_ids
+                )
+            }
+
+    return None
+
+
+def check_vendor_conflicts_for_event(
+    event,
+    new_date,
+    new_start_time,
+    new_end_time
+):
+    """
+    Re-check active vendors assigned to an event
+    against other events after a date/time change.
+    """
+
+    vendors = Vendor.objects.filter(
+        event_id=event.id,
+        status__in=["Pending", "Confirmed"]
+    )
+
+    for vendor in vendors:
+
+        # Create a temporary event-like object
+        # containing the proposed date/time.
+        proposed_event = Event(
+            id=event.id,
+            date=new_date,
+            start_time=new_start_time,
+            end_time=new_end_time,
+            location=event.location
+        )
+
+        conflict = check_vendor_conflict(
+            vendor.company,
+            proposed_event,
+            exclude_vendor_id=vendor.id
+        )
+
+        if conflict:
+            return {
+                "vendor": vendor,
+                "conflict": conflict
+            }
+
+    return None
 
 
 @csrf_exempt
@@ -249,26 +413,51 @@ def event_list(request):
             }, status=400)
 
         try:
-            event = Event.objects.get(id=event_id)
+            event = Event.objects.get(
+                id=event_id
+            )
 
         except Event.DoesNotExist:
             return JsonResponse({
                 "message": "Event not found"
             }, status=404)
 
+        # ==================================================
+        # PREPARE PROPOSED VALUES
+        # ==================================================
+
+        new_name = event.name
+        new_date = event.date
+        new_start_time = event.start_time
+        new_end_time = event.end_time
+        new_location = event.location
+        new_budget = event.budget
+        new_capacity = event.capacity
+
+        # ==================================================
+        # NAME
+        # ==================================================
+
         if "name" in data:
 
-            if not data["name"] or not data["name"].strip():
+            if (
+                not data["name"]
+                or not data["name"].strip()
+            ):
                 return JsonResponse({
                     "message": "Event name cannot be empty"
                 }, status=400)
 
-            event.name = data["name"].strip()
+            new_name = data["name"].strip()
+
+        # ==================================================
+        # DATE
+        # ==================================================
 
         if "date" in data:
 
             try:
-                event.date = datetime.strptime(
+                new_date = datetime.strptime(
                     data["date"],
                     "%Y-%m-%d"
                 ).date()
@@ -278,10 +467,14 @@ def event_list(request):
                     "message": "Date must be in YYYY-MM-DD format"
                 }, status=400)
 
+        # ==================================================
+        # START TIME
+        # ==================================================
+
         if "start_time" in data:
 
             try:
-                event.start_time = datetime.strptime(
+                new_start_time = datetime.strptime(
                     data["start_time"],
                     "%H:%M"
                 ).time()
@@ -291,10 +484,14 @@ def event_list(request):
                     "message": "Start time must be in HH:MM format"
                 }, status=400)
 
+        # ==================================================
+        # END TIME
+        # ==================================================
+
         if "end_time" in data:
 
             try:
-                event.end_time = datetime.strptime(
+                new_end_time = datetime.strptime(
                     data["end_time"],
                     "%H:%M"
                 ).time()
@@ -304,26 +501,43 @@ def event_list(request):
                     "message": "End time must be in HH:MM format"
                 }, status=400)
 
-        if event.start_time and event.end_time:
+        # ==================================================
+        # TIME VALIDATION
+        # ==================================================
 
-            if event.start_time >= event.end_time:
+        if new_start_time and new_end_time:
+
+            if new_start_time >= new_end_time:
                 return JsonResponse({
                     "message": "End time must be after start time"
                 }, status=400)
 
+        # ==================================================
+        # LOCATION
+        # ==================================================
+
         if "location" in data:
 
-            if not data["location"] or not data["location"].strip():
+            if (
+                not data["location"]
+                or not data["location"].strip()
+            ):
                 return JsonResponse({
                     "message": "Event location cannot be empty"
                 }, status=400)
 
-            event.location = data["location"].strip()
+            new_location = data["location"].strip()
+
+        # ==================================================
+        # BUDGET
+        # ==================================================
 
         if "budget" in data:
 
             try:
-                new_budget = float(data["budget"])
+                new_budget = float(
+                    data["budget"]
+                )
 
             except (ValueError, TypeError):
                 return JsonResponse({
@@ -335,12 +549,16 @@ def event_list(request):
                     "message": "Budget must be greater than 0"
                 }, status=400)
 
-            event.budget = new_budget
+        # ==================================================
+        # CAPACITY
+        # ==================================================
 
         if "capacity" in data:
 
             try:
-                new_capacity = int(data["capacity"])
+                new_capacity = int(
+                    data["capacity"]
+                )
 
             except (ValueError, TypeError):
                 return JsonResponse({
@@ -352,50 +570,229 @@ def event_list(request):
                     "message": "Capacity must be greater than 0"
                 }, status=400)
 
-            from registrations.models import Registration
-
-            active_registrations = Registration.objects.filter(
-                event_id=event.id
-            ).exclude(
-                status="Cancelled"
-            ).count()
+            active_registrations = (
+                Registration.objects.filter(
+                    event_id=event.id
+                )
+                .exclude(
+                    status="Cancelled"
+                )
+                .count()
+            )
 
             if new_capacity < active_registrations:
+
+                message = (
+                    "Capacity cannot be less than the current "
+                    "number of active registrations"
+                )
+
+                # Notify about rejected capacity change
+                send_event_notification(
+                    event.id,
+                    "Last-minute event change rejected: "
+                    + message
+                )
+
                 return JsonResponse({
-                    "message": (
-                        "Capacity cannot be less than the current "
-                        "number of active registrations"
-                    ),
-                    "current_registrations": active_registrations,
-                    "requested_capacity": new_capacity
+                    "message": message,
+                    "current_registrations":
+                        active_registrations,
+                    "requested_capacity":
+                        new_capacity
                 }, status=400)
 
-            event.capacity = new_capacity
+        # ==================================================
+        # 1. LOCATION CONFLICT CHECK
+        # ==================================================
 
         if (
-            event.start_time
-            and event.end_time
-            and event.location
+            new_start_time
+            and new_end_time
+            and new_location
         ):
 
             location_conflict = Event.objects.filter(
-                date=event.date,
-                location__iexact=event.location,
-                start_time__lt=event.end_time,
-                end_time__gt=event.start_time
+                date=new_date,
+                location__iexact=new_location,
+                start_time__lt=new_end_time,
+                end_time__gt=new_start_time
             ).exclude(
                 id=event.id
             ).exists()
 
             if location_conflict:
+
+                message = (
+                    "Location conflict: another event is already "
+                    "scheduled at this location during this time"
+                )
+
+                send_event_notification(
+                    event.id,
+                    "Last-minute event change rejected: "
+                    + message
+                )
+
+                ConflictRecord.objects.create(
+                    conflict_type="Location",
+                    event_id=event.id,
+                    description=message,
+                    status="Prevented"
+                )
+
                 return JsonResponse({
-                    "message": (
-                        "Location conflict: another event is already "
-                        "scheduled at this location during this time"
-                    )
+                    "message": message
                 }, status=400)
 
+        # ==================================================
+        # 2. RESOURCE CONFLICT CHECK
+        # ==================================================
+
+        resource_conflict = (
+            check_resource_conflicts_for_event(
+                event,
+                new_date,
+                new_start_time,
+                new_end_time
+            )
+        )
+
+        if resource_conflict:
+
+            resource = resource_conflict["resource"]
+
+            message = (
+                f"Resource conflict: changing this event "
+                f"would make {resource.name} unavailable. "
+                f"Requested: "
+                f"{resource_conflict['requested']}, "
+                f"already required by overlapping events: "
+                f"{resource_conflict['already_required']}, "
+                f"total capacity: {resource.quantity}."
+            )
+
+            send_event_notification(
+                event.id,
+                "Last-minute event change rejected: "
+                + message
+            )
+
+            for conflicting_event_id in (
+                resource_conflict["conflicting_event_ids"]
+            ):
+
+                ConflictRecord.objects.create(
+                    conflict_type="Resource",
+                    event_id=event.id,
+                    conflicting_event_id=
+                        conflicting_event_id,
+                    resource_id=resource.id,
+                    description=message,
+                    status="Prevented"
+                )
+
+            return JsonResponse({
+                "message": message,
+                "resource": resource.name,
+                "requested":
+                    resource_conflict["requested"],
+                "already_required":
+                    resource_conflict["already_required"],
+                "total_capacity":
+                    resource.quantity,
+                "conflicting_event_ids":
+                    resource_conflict[
+                        "conflicting_event_ids"
+                    ]
+            }, status=400)
+
+        # ==================================================
+        # 3. VENDOR CONFLICT CHECK
+        # ==================================================
+
+        vendor_conflict = (
+            check_vendor_conflicts_for_event(
+                event,
+                new_date,
+                new_start_time,
+                new_end_time
+            )
+        )
+
+        if vendor_conflict:
+
+            vendor = vendor_conflict["vendor"]
+            conflict = vendor_conflict["conflict"]
+
+            if conflict["same_event"]:
+
+                message = (
+                    "Vendor conflict: this vendor would "
+                    "overlap with another assignment for "
+                    "the same event"
+                )
+
+            else:
+
+                message = (
+                    "Vendor conflict: changing this event "
+                    "would make the vendor overlap with "
+                    "another event"
+                )
+
+            send_event_notification(
+                event.id,
+                "Last-minute event change rejected: "
+                + message
+            )
+
+            return JsonResponse({
+                "message": message,
+                "vendor": vendor.company,
+                "conflicting_vendor_id":
+                    conflict["vendor_id"],
+                "conflicting_event_id":
+                    conflict["event_id"]
+            }, status=400)
+
+        # ==================================================
+        # ALL CHECKS PASSED
+        # ==================================================
+
+        event.name = new_name
+        event.date = new_date
+        event.start_time = new_start_time
+        event.end_time = new_end_time
+        event.location = new_location
+        event.budget = new_budget
+        event.capacity = new_capacity
+
         event.save()
+
+        # ==================================================
+        # UPDATE EXISTING ALLOCATION TIMES
+        # ==================================================
+
+        allocations = Allocation.objects.filter(
+            event_id=event.id
+        )
+
+        for allocation in allocations:
+            allocation.start_time = event.start_time
+            allocation.end_time = event.end_time
+            allocation.save()
+
+        # ==================================================
+        # SUCCESS NOTIFICATION
+        # ==================================================
+
+        send_event_notification(
+            event.id,
+            "Event details were changed successfully. "
+            "Existing resource allocations were updated "
+            "to match the new event timing."
+        )
 
         return JsonResponse({
             "message": "Event updated successfully",
@@ -446,7 +843,9 @@ def event_list(request):
             }, status=400)
 
         try:
-            event = Event.objects.get(id=event_id)
+            event = Event.objects.get(
+                id=event_id
+            )
 
         except Event.DoesNotExist:
             return JsonResponse({

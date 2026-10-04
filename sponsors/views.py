@@ -4,6 +4,7 @@ from django.views.decorators.csrf import csrf_exempt
 import json
 
 from .models import Sponsor
+from events.models import Event
 
 
 @csrf_exempt
@@ -75,6 +76,13 @@ def sponsor_list(request):
             return JsonResponse({
                 "message": "event_id must be greater than 0"
             }, status=400)
+
+        try:
+            Event.objects.get(id=event_id)
+        except Event.DoesNotExist:
+            return JsonResponse({
+                "message": "Event not found"
+            }, status=404)
 
         if amount < 0:
             return JsonResponse({
@@ -176,6 +184,13 @@ def sponsor_list(request):
                 return JsonResponse({
                     "message": "event_id must be greater than 0"
                 }, status=400)
+
+            try:
+                Event.objects.get(id=event_id)
+            except Event.DoesNotExist:
+                return JsonResponse({
+                    "message": "Event not found"
+                }, status=404)
 
             sponsor.event_id = event_id
 

@@ -5,11 +5,15 @@ import {
   Route,
   Navigate,
 } from "react-router-dom";
+
 import ResetPassword from "./pages/ResetPassword";
 import ChangePassword from "./pages/ChangePassword";
 import Profile from "./pages/Profile";
+import Notifications from "./pages/Notifications";
+
 import Navbar from "./components/Navbar";
 import ProtectedRoute from "./components/ProtectedRoute";
+
 import ForgotPassword from "./pages/ForgotPassword";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
@@ -153,6 +157,14 @@ function App() {
           )}
         />
 
+        {/* Notifications */}
+        <Route
+          path="/notifications"
+          element={protectedPage(
+            <Notifications />
+          )}
+        />
+
 
         {/* ========================= */}
         {/* ADMIN + ORGANIZER */}
@@ -228,6 +240,56 @@ function App() {
 
 
         {/* ========================= */}
+        {/* PROFILE */}
+        {/* ========================= */}
+
+        <Route
+          path="/profile"
+          element={protectedPage(
+            <Profile
+              user={user}
+              onProfileUpdate={(updatedUser) => {
+                setUser(updatedUser);
+                localStorage.setItem(
+                  "user",
+                  JSON.stringify(updatedUser)
+                );
+              }}
+            />
+          )}
+        />
+
+        {/* Change Password */}
+        <Route
+          path="/change-password"
+          element={protectedPage(
+            <ChangePassword />
+          )}
+        />
+
+        {/* Forgot Password */}
+        <Route
+          path="/forgot-password"
+          element={
+            user ? (
+              <Navigate
+                to="/dashboard"
+                replace
+              />
+            ) : (
+              <ForgotPassword />
+            )
+          }
+        />
+
+        {/* Reset Password */}
+        <Route
+          path="/reset-password/:uid/:token"
+          element={<ResetPassword />}
+        />
+
+
+        {/* ========================= */}
         {/* DEFAULT ROUTES */}
         {/* ========================= */}
 
@@ -244,41 +306,7 @@ function App() {
             />
           }
         />
-<Route
-  path="/profile"
-  element={protectedPage(
-    <Profile
-      user={user}
-      onProfileUpdate={(updatedUser) => {
-        setUser(updatedUser);
-        localStorage.setItem(
-          "user",
-          JSON.stringify(updatedUser)
-        );
-      }}
-    />
-  )}
-/>
-<Route
-  path="/change-password"
-  element={protectedPage(
-    <ChangePassword />
-  )}
-/>
-<Route
-  path="/forgot-password"
-  element={
-    user ? (
-      <Navigate to="/dashboard" replace />
-    ) : (
-      <ForgotPassword />
-    )
-  }
-/>
-<Route
-  path="/reset-password/:uid/:token"
-  element={<ResetPassword />}
-/>
+
         <Route
           path="*"
           element={

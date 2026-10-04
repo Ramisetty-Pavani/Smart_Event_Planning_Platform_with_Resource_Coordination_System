@@ -23,7 +23,6 @@ def registration_list(request):
         event_id = request.GET.get("event_id")
 
         if event_id:
-
             try:
                 event_id = int(event_id)
             except (ValueError, TypeError):
@@ -36,13 +35,11 @@ def registration_list(request):
             ).order_by("-id")
 
         else:
-
             registrations = Registration.objects.all().order_by("-id")
 
         registration_data = []
 
         for registration in registrations:
-
             registration_data.append({
                 "id": registration.id,
                 "event_id": registration.event_id,
@@ -134,20 +131,24 @@ def registration_list(request):
         current_date = timezone.localdate()
         current_time = timezone.localtime().time()
 
-        # Event date has already passed
         if event.date < current_date:
             return JsonResponse({
-                "message": "Registration is closed. This event has already been completed."
+                "message": (
+                    "Registration is closed. "
+                    "This event has already been completed."
+                )
             }, status=400)
 
-        # Event is today and has already ended
         if (
             event.date == current_date
             and event.end_time is not None
             and current_time >= event.end_time
         ):
             return JsonResponse({
-                "message": "Registration is closed. This event has already ended."
+                "message": (
+                    "Registration is closed. "
+                    "This event has already ended."
+                )
             }, status=400)
 
         # =========================
@@ -180,7 +181,9 @@ def registration_list(request):
 
         if len(phone) != 10:
             return JsonResponse({
-                "message": "Phone number must contain exactly 10 digits"
+                "message": (
+                    "Phone number must contain exactly 10 digits"
+                )
             }, status=400)
 
         # =========================
@@ -196,7 +199,10 @@ def registration_list(request):
 
         if existing_registration:
             return JsonResponse({
-                "message": "This email is already registered for this event"
+                "message": (
+                    "This email is already registered "
+                    "for this event"
+                )
             }, status=400)
 
         # =========================
@@ -239,7 +245,9 @@ def registration_list(request):
             create_notification(
                 event_id,
                 "Registration",
-                "New registration received from " + registration.name
+                "New registration received from "
+                + registration.name,
+                registration.email
             )
         except Exception:
             pass
@@ -281,7 +289,9 @@ def registration_list(request):
             registration_id = int(registration_id)
         except (ValueError, TypeError):
             return JsonResponse({
-                "message": "Registration id must be a valid number"
+                "message": (
+                    "Registration id must be a valid number"
+                )
             }, status=400)
 
         try:
@@ -337,7 +347,10 @@ def registration_list(request):
 
             if duplicate:
                 return JsonResponse({
-                    "message": "This email is already registered for this event"
+                    "message": (
+                        "This email is already registered "
+                        "for this event"
+                    )
                 }, status=400)
 
             registration.email = email
@@ -352,12 +365,17 @@ def registration_list(request):
 
             if not phone.isdigit():
                 return JsonResponse({
-                    "message": "Phone number must contain only digits"
+                    "message": (
+                        "Phone number must contain only digits"
+                    )
                 }, status=400)
 
             if len(phone) != 10:
                 return JsonResponse({
-                    "message": "Phone number must contain exactly 10 digits"
+                    "message": (
+                        "Phone number must contain exactly "
+                        "10 digits"
+                    )
                 }, status=400)
 
             registration.phone = phone
@@ -387,7 +405,7 @@ def registration_list(request):
             old_status = registration.status
 
             # =========================
-            # REACTIVATE CANCELLED REGISTRATION
+            # REACTIVATE CANCELLED
             # =========================
 
             if (
@@ -399,7 +417,6 @@ def registration_list(request):
                     id=registration.event_id
                 )
 
-                # Check whether event is completed
                 current_date = timezone.localdate()
                 current_time = timezone.localtime().time()
 
@@ -407,7 +424,8 @@ def registration_list(request):
                     return JsonResponse({
                         "message": (
                             "Cannot reactivate registration. "
-                            "This event has already been completed."
+                            "This event has already been "
+                            "completed."
                         )
                     }, status=400)
 
@@ -424,15 +442,21 @@ def registration_list(request):
                     }, status=400)
 
                 # Capacity check
+
                 if event.capacity is not None:
 
-                    active_registrations = Registration.objects.filter(
-                        event_id=registration.event_id
-                    ).exclude(
-                        status="Cancelled"
-                    ).exclude(
-                        id=registration.id
-                    ).count()
+                    active_registrations = (
+                        Registration.objects.filter(
+                            event_id=registration.event_id
+                        )
+                        .exclude(
+                            status="Cancelled"
+                        )
+                        .exclude(
+                            id=registration.id
+                        )
+                        .count()
+                    )
 
                     if active_registrations >= event.capacity:
                         return JsonResponse({
@@ -441,7 +465,8 @@ def registration_list(request):
                                 "Event capacity is full"
                             ),
                             "capacity": event.capacity,
-                            "registered": active_registrations
+                            "registered":
+                                active_registrations
                         }, status=400)
 
             registration.status = new_status
@@ -468,15 +493,14 @@ def registration_list(request):
                     )
                 }, status=400)
 
-            # Cancelled registration should not be marked present
             if (
                 registration.status == "Cancelled"
                 and attendance == "Present"
             ):
                 return JsonResponse({
                     "message": (
-                        "Cancelled registration cannot be "
-                        "marked as Present"
+                        "Cancelled registration cannot "
+                        "be marked as Present"
                     )
                 }, status=400)
 
@@ -521,7 +545,9 @@ def registration_list(request):
             registration_id = int(registration_id)
         except (ValueError, TypeError):
             return JsonResponse({
-                "message": "Registration id must be a valid number"
+                "message": (
+                    "Registration id must be a valid number"
+                )
             }, status=400)
 
         try:
@@ -533,7 +559,7 @@ def registration_list(request):
                 "message": "Registration not found"
             }, status=404)
 
-        # Soft delete: keep the record but cancel it
+        # Soft delete
         registration.status = "Cancelled"
         registration.attendance = "Not Marked"
 
@@ -590,7 +616,9 @@ def set_event_capacity(request):
         capacity = int(capacity)
     except (ValueError, TypeError):
         return JsonResponse({
-            "message": "Event id and capacity must be valid numbers"
+            "message": (
+                "Event id and capacity must be valid numbers"
+            )
         }, status=400)
 
     if event_id <= 0:
@@ -699,12 +727,17 @@ def scan_attendance(request):
 
     if registration.event_id != event_id:
         return JsonResponse({
-            "message": "This QR code does not belong to this event"
+            "message": (
+                "This QR code does not belong to this event"
+            )
         }, status=400)
 
     if registration.status == "Cancelled":
         return JsonResponse({
-            "message": "Cancelled registration cannot be marked as Present"
+            "message": (
+                "Cancelled registration cannot be "
+                "marked as Present"
+            )
         }, status=400)
 
     if registration.attendance == "Present":
@@ -721,11 +754,17 @@ def scan_attendance(request):
         update_fields=["attendance"]
     )
 
+    # =========================
+    # ATTENDANCE NOTIFICATION
+    # =========================
+
     try:
         create_notification(
             event_id,
             "Attendance",
-            "Attendance marked for " + registration.name
+            "Attendance marked for "
+            + registration.name,
+            registration.email
         )
     except Exception:
         pass

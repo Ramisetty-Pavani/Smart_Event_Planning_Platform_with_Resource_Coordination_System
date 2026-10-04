@@ -32,6 +32,10 @@ function Dashboard({ user }) {
 
   const isParticipant = user?.role === "Participant";
 
+  const canDownloadReport =
+    user?.role === "Organizer" ||
+    user?.is_superuser === true;
+
   useEffect(() => {
     loadDashboard();
   }, [user]);
@@ -40,21 +44,48 @@ function Dashboard({ user }) {
     setLoading(true);
 
     try {
+      // --------------------------------
+      // Load events
+      // --------------------------------
+
       const eventsResponse = await fetch(
-        "http://localhost:8000/api/events/"
+        "http://localhost:8000/api/events/",
+        {
+          credentials: "include",
+        }
       );
 
       const eventsData = await eventsResponse.json();
 
+      if (!eventsResponse.ok) {
+        throw new Error(
+          eventsData.message || "Failed to load events"
+        );
+      }
+
       setEvents(eventsData.events || []);
+
+      // --------------------------------
+      // Participant dashboard
+      // --------------------------------
 
       if (isParticipant) {
         const registrationsResponse = await fetch(
-          "http://localhost:8000/api/registrations/"
+          "http://localhost:8000/api/registrations/",
+          {
+            credentials: "include",
+          }
         );
 
         const registrationsData =
           await registrationsResponse.json();
+
+        if (!registrationsResponse.ok) {
+          throw new Error(
+            registrationsData.message ||
+              "Failed to load registrations"
+          );
+        }
 
         const allRegistrations =
           registrationsData.registrations || [];
@@ -68,12 +99,26 @@ function Dashboard({ user }) {
 
         setRegistrations(myRegistrations);
       } else {
+        // --------------------------------
+        // Admin / Organizer / Staff dashboard
+        // --------------------------------
+
         const dashboardResponse = await fetch(
-          "http://localhost:8000/api/dashboard/summary/"
+          "http://localhost:8000/api/dashboard/",
+          {
+            credentials: "include",
+          }
         );
 
         const dashboardResult =
           await dashboardResponse.json();
+
+        if (!dashboardResponse.ok) {
+          throw new Error(
+            dashboardResult.message ||
+              "Failed to load dashboard"
+          );
+        }
 
         setDashboardData(dashboardResult);
       }
@@ -84,6 +129,57 @@ function Dashboard({ user }) {
       );
     } finally {
       setLoading(false);
+    }
+  };
+
+  const downloadReport = async () => {
+    try {
+      const response = await fetch(
+        "http://localhost:8000/api/dashboard/export/",
+        {
+          credentials: "include",
+        }
+      );
+
+      if (!response.ok) {
+        const errorData =
+          await response.json().catch(() => ({}));
+
+        throw new Error(
+          errorData.message ||
+            "Failed to download report"
+        );
+      }
+
+      const blob = await response.blob();
+
+      const url =
+        window.URL.createObjectURL(blob);
+
+      const link =
+        document.createElement("a");
+
+      link.href = url;
+      link.download =
+        "event_dashboard_report.csv";
+
+      document.body.appendChild(link);
+
+      link.click();
+
+      link.remove();
+
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error(
+        "Report download error:",
+        error
+      );
+
+      alert(
+        error.message ||
+          "Failed to download report"
+      );
     }
   };
 
@@ -100,6 +196,7 @@ function Dashboard({ user }) {
     }
 
     const today = new Date();
+
     today.setHours(0, 0, 0, 0);
 
     const eventDate = new Date(
@@ -142,6 +239,7 @@ function Dashboard({ user }) {
         <div style={styles.container}>
 
           {/* Header */}
+
           <div style={styles.header}>
             <div>
               <p style={styles.smallHeading}>
@@ -173,6 +271,7 @@ function Dashboard({ user }) {
           </div>
 
           {/* Statistics */}
+
           <div style={styles.statsGrid}>
 
             <div style={styles.statCard}>
@@ -238,6 +337,7 @@ function Dashboard({ user }) {
           </div>
 
           {/* Quick Actions */}
+
           <div style={styles.quickGrid}>
 
             <div
@@ -288,6 +388,7 @@ function Dashboard({ user }) {
           </div>
 
           {/* My Registrations */}
+
           <div style={styles.section}>
             <div style={styles.sectionHeader}>
               <div>
@@ -365,7 +466,6 @@ function Dashboard({ user }) {
                           }
                         >
 
-                          {/* Event Status */}
                           <span
                             style={{
                               ...styles.statusBadge,
@@ -384,7 +484,6 @@ function Dashboard({ user }) {
                             {eventStatus}
                           </span>
 
-                          {/* Registration Status */}
                           <span
                             style={{
                               ...styles.statusBadge,
@@ -403,7 +502,6 @@ function Dashboard({ user }) {
                             {registration.status}
                           </span>
 
-                          {/* Attendance */}
                           <span
                             style={
                               styles.attendanceBadge
@@ -422,6 +520,7 @@ function Dashboard({ user }) {
           </div>
 
           {/* Upcoming Events */}
+
           <div style={styles.section}>
             <div style={styles.sectionHeader}>
               <div>
@@ -487,6 +586,7 @@ function Dashboard({ user }) {
                     <div
                       style={styles.details}
                     >
+
                       <div
                         style={
                           styles.detailRow
@@ -586,6 +686,7 @@ function Dashboard({ user }) {
                           </strong>
                         </div>
                       </div>
+
                     </div>
                   </div>
                 ))}
@@ -599,7 +700,7 @@ function Dashboard({ user }) {
   }
 
   /* =========================
-     ADMIN / ORGANIZER DASHBOARD
+     ADMIN / ORGANIZER / STAFF DASHBOARD
      ========================= */
 
   const summary =
@@ -608,6 +709,8 @@ function Dashboard({ user }) {
   return (
     <div style={styles.page}>
       <div style={styles.container}>
+
+        {/* Header */}
 
         <div style={styles.header}>
           <div>
@@ -631,13 +734,28 @@ function Dashboard({ user }) {
             </p>
           </div>
 
-          <button
-            onClick={loadDashboard}
-            style={styles.refreshButton}
-          >
-            ↻ Refresh
-          </button>
+          <div style={styles.headerActions}>
+
+            {canDownloadReport && (
+              <button
+                onClick={downloadReport}
+                style={styles.downloadButton}
+              >
+                ↓ Download Report
+              </button>
+            )}
+
+            <button
+              onClick={loadDashboard}
+              style={styles.refreshButton}
+            >
+              ↻ Refresh
+            </button>
+
+          </div>
         </div>
+
+        {/* Statistics */}
 
         <div style={styles.statsGrid}>
 
@@ -668,8 +786,7 @@ function Dashboard({ user }) {
               </p>
 
               <h2 style={styles.statValue}>
-                {summary.total_registered ||
-                  0}
+                {summary.total_registered || 0}
               </h2>
             </div>
           </div>
@@ -685,8 +802,7 @@ function Dashboard({ user }) {
               </p>
 
               <h2 style={styles.statValue}>
-                {summary.current_conflict_count ||
-                  0}
+                {summary.total_conflicts || 0}
               </h2>
             </div>
           </div>
@@ -702,14 +818,14 @@ function Dashboard({ user }) {
               </p>
 
               <h2 style={styles.statValue}>
-                {summary.budget_utilization ||
-                  0}
-                %
+                {summary.budget_utilization || 0}%
               </h2>
             </div>
           </div>
 
         </div>
+
+        {/* Budget Overview */}
 
         <div style={styles.section}>
           <h2 style={styles.sectionTitle}>
@@ -754,6 +870,8 @@ function Dashboard({ user }) {
           </div>
         </div>
 
+        {/* Attendance */}
+
         <div style={styles.section}>
           <h2 style={styles.sectionTitle}>
             Attendance
@@ -761,7 +879,7 @@ function Dashboard({ user }) {
 
           <div style={styles.attendanceBox}>
             <strong>
-              {summary.attendance_rate || 0}%
+              {summary.overall_attendance_rate || 0}%
             </strong>
 
             <span>
@@ -771,6 +889,8 @@ function Dashboard({ user }) {
             </span>
           </div>
         </div>
+
+        {/* Events */}
 
         <div style={styles.section}>
           <div style={styles.sectionHeader}>
@@ -836,6 +956,7 @@ function Dashboard({ user }) {
                   <div
                     style={styles.details}
                   >
+
                     <div
                       style={
                         styles.detailRow
@@ -899,12 +1020,15 @@ function Dashboard({ user }) {
                         </strong>
                       </div>
                     </div>
+
                   </div>
                 </div>
               );
             })}
           </div>
         </div>
+
+        {/* System Status */}
 
         <div style={styles.systemStatus}>
           <span>System Status</span>
@@ -941,6 +1065,12 @@ const styles = {
     marginBottom: "25px",
   },
 
+  headerActions: {
+    display: "flex",
+    alignItems: "center",
+    gap: "10px",
+  },
+
   smallHeading: {
     margin: 0,
     color: "#2563eb",
@@ -971,6 +1101,16 @@ const styles = {
     border: "1px solid #dbe2ea",
     background: "#ffffff",
     color: "#334155",
+    padding: "10px 16px",
+    borderRadius: "8px",
+    cursor: "pointer",
+    fontWeight: "600",
+  },
+
+  downloadButton: {
+    border: "none",
+    background: "#2563eb",
+    color: "#ffffff",
     padding: "10px 16px",
     borderRadius: "8px",
     cursor: "pointer",

@@ -1,11 +1,27 @@
 import { useEffect, useRef, useState } from "react";
 import { Html5QrcodeScanner } from "html5-qrcode";
 
-const EVENTS_URL =
-  "http://127.0.0.1:8000/api/events/";
+const EVENTS_URL = "http://localhost:8000/api/events/";
+const SCAN_URL = "http://localhost:8000/api/attendance/";
 
-const SCAN_URL =
-  "http://127.0.0.1:8000/api/registrations/scan-attendance/";
+async function getResponseData(response) {
+  const contentType = response.headers.get("content-type") || "";
+  const text = await response.text();
+
+  if (!contentType.includes("application/json")) {
+    throw new Error(
+      `Server returned ${response.status} instead of JSON`
+    );
+  }
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(
+      `Server returned invalid JSON (${response.status})`
+    );
+  }
+}
 
 function QRScanner() {
   const [events, setEvents] = useState([]);
@@ -32,9 +48,11 @@ function QRScanner() {
       setError("");
 
       try {
-        const response = await fetch(EVENTS_URL);
+        const response = await fetch(EVENTS_URL, {
+          credentials: "include",
+        });
 
-        const data = await response.json();
+        const data = await getResponseData(response);
 
         if (!response.ok) {
           throw new Error(
@@ -88,14 +106,11 @@ function QRScanner() {
       "qr-reader",
       {
         fps: 10,
-
         qrbox: {
           width: 280,
           height: 280,
         },
-
         rememberLastUsedCamera: true,
-
         supportedScanTypes: [0],
       },
       false
@@ -120,13 +135,15 @@ function QRScanner() {
             "Content-Type": "application/json",
           },
 
+          credentials: "include",
+
           body: JSON.stringify({
             qr_token: qrToken,
             event_id: Number(eventId),
           }),
         });
 
-        const data = await response.json();
+        const data = await getResponseData(response);
 
         if (response.ok) {
           const registration = data.registration;
@@ -158,7 +175,10 @@ function QRScanner() {
           );
         }
       } catch (err) {
-        setError("Could not connect to Django");
+        setError(
+          err.message ||
+            "Could not connect to Django"
+        );
       } finally {
         setProcessing(false);
 
@@ -214,10 +234,6 @@ function QRScanner() {
 
   return (
     <div style={styles.page}>
-      {/* =================================================
-          HEADER
-      ================================================= */}
-
       <div style={styles.header}>
         <div>
           <div style={styles.eyebrow}>
@@ -240,10 +256,6 @@ function QRScanner() {
         </div>
       </div>
 
-      {/* =================================================
-          ERROR ALERT
-      ================================================= */}
-
       {error && (
         <div style={styles.errorAlert}>
           <div style={styles.alertIcon}>
@@ -257,10 +269,6 @@ function QRScanner() {
           </div>
         </div>
       )}
-
-      {/* =================================================
-          SUCCESS ALERT
-      ================================================= */}
 
       {message && (
         <div style={styles.successAlert}>
@@ -277,10 +285,6 @@ function QRScanner() {
           </div>
         </div>
       )}
-
-      {/* =================================================
-          EVENT SELECTION
-      ================================================= */}
 
       <div style={styles.sectionCard}>
         <div style={styles.sectionHeader}>
@@ -337,8 +341,6 @@ function QRScanner() {
           )}
         </div>
 
-        {/* SELECTED EVENT */}
-
         {selectedEvent && (
           <div style={styles.selectedEvent}>
             <div style={styles.eventAvatar}>
@@ -364,16 +366,8 @@ function QRScanner() {
         )}
       </div>
 
-      {/* =================================================
-          SCANNER
-      ================================================= */}
-
       {eventId ? (
         <div style={styles.scannerLayout}>
-          {/* =================================================
-              CAMERA CARD
-          ================================================= */}
-
           <div style={styles.scannerCard}>
             <div style={styles.scannerHeader}>
               <div>
@@ -401,8 +395,6 @@ function QRScanner() {
                   : "Scanner Off"}
               </div>
             </div>
-
-            {/* CAMERA */}
 
             <div style={styles.cameraContainer}>
               <div
@@ -433,8 +425,6 @@ function QRScanner() {
               )}
             </div>
 
-            {/* SCANNING TIP */}
-
             <div style={styles.scannerTip}>
               <div style={styles.tipIcon}>
                 💡
@@ -460,13 +450,7 @@ function QRScanner() {
             </div>
           </div>
 
-          {/* =================================================
-              RIGHT SIDE
-          ================================================= */}
-
           <div style={styles.sideColumn}>
-            {/* EVENT CARD */}
-
             <div style={styles.infoCard}>
               <div style={styles.infoIcon}>
                 📅
@@ -483,8 +467,6 @@ function QRScanner() {
                 </h3>
               </div>
             </div>
-
-            {/* LAST SCAN */}
 
             <div style={styles.lastScanCard}>
               <div style={styles.lastScanHeader}>
@@ -573,8 +555,6 @@ function QRScanner() {
               )}
             </div>
 
-            {/* VALIDATION INFO */}
-
             <div
               style={styles.validationCard}
             >
@@ -605,10 +585,6 @@ function QRScanner() {
           </div>
         </div>
       ) : (
-        /* =================================================
-           NO EVENT SELECTED
-        ================================================= */
-
         <div style={styles.emptyScanner}>
           <div
             style={
@@ -633,10 +609,6 @@ function QRScanner() {
   );
 }
 
-// =======================================================
-// VALIDATION ITEM
-// =======================================================
-
 function ValidationItem({ text }) {
   return (
     <div style={styles.validationItem}>
@@ -650,10 +622,6 @@ function ValidationItem({ text }) {
     </div>
   );
 }
-
-// =======================================================
-// STYLES
-// =======================================================
 
 const styles = {
   page: {

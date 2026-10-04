@@ -7,6 +7,8 @@ from registrations.models import Registration
 from allocations.models import Allocation
 from resources.models import Resource
 from vendors.models import Vendor
+from sponsors.models import Sponsor
+from accounts.models import UserProfile
 
 from .models import ConflictRecord
 
@@ -264,6 +266,34 @@ def dashboard_summary(request):
             event.budget
         )
 
+        sponsorship = sum(
+            float(sponsor.amount)
+            for sponsor in Sponsor.objects.filter(
+                event_id=event.id
+            )
+        )
+
+        available_funds = (
+            budget_data["budget"]
+            + sponsorship
+        )
+
+        remaining_budget = (
+            available_funds
+            - budget_data["expenses"]
+        )
+
+        if available_funds > 0:
+            budget_utilization = round(
+                (
+                    budget_data["expenses"]
+                    / available_funds
+                ) * 100,
+                2
+            )
+        else:
+            budget_utilization = 0
+
         allocations = Allocation.objects.filter(
             event_id=event.id
         )
@@ -315,17 +345,19 @@ def dashboard_summary(request):
             "registration_utilization": registration_utilization,
 
             "budget": budget_data["budget"],
+            "sponsorship": sponsorship,
+            "available_funds": available_funds,
             "expenses": budget_data["expenses"],
-            "remaining_budget": budget_data["remaining"],
-            "budget_utilization": budget_data["utilization"],
+            "remaining_budget": remaining_budget,
+            "budget_utilization": budget_utilization,
 
             "budget_status": (
                 "Exceeded"
-                if budget_data["expenses"] > budget_data["budget"]
+                if budget_data["expenses"] > available_funds
                 else (
                     "Almost Exceeded"
-                    if budget_data["budget"] > 0
-                    and budget_data["utilization"] >= 90
+                    if available_funds > 0
+                    and budget_utilization >= 90
                     else "Within Budget"
                 )
             ),
@@ -342,6 +374,47 @@ def dashboard_summary(request):
 
 @csrf_exempt
 def dashboard_export(request):
+
+    # -----------------------------
+    # Authentication
+    # -----------------------------
+
+    if not request.user.is_authenticated:
+
+        return JsonResponse({
+            "message": "Authentication required."
+        }, status=401)
+
+    # -----------------------------
+    # Admin or Organizer only
+    # -----------------------------
+
+    try:
+        user_profile = UserProfile.objects.get(
+            user=request.user
+        )
+    except UserProfile.DoesNotExist:
+        user_profile = None
+
+    is_admin = request.user.is_superuser
+
+    is_organizer = (
+        user_profile is not None
+        and user_profile.role == "Organizer"
+    )
+
+    if not is_admin and not is_organizer:
+
+        return JsonResponse({
+            "message": (
+                "Only Admin or Organizer users "
+                "can download dashboard reports."
+            )
+        }, status=403)
+
+    # -----------------------------
+    # CSV response
+    # -----------------------------
 
     response = HttpResponse(
         content_type="text/csv"
@@ -368,6 +441,8 @@ def dashboard_export(request):
         "Attendance Rate",
         "Registration Utilization",
         "Budget",
+        "Sponsorship",
+        "Available Funds",
         "Expenses",
         "Remaining Budget",
         "Budget Utilization",
@@ -413,6 +488,34 @@ def dashboard_export(request):
             event.id,
             event.budget
         )
+
+        sponsorship = sum(
+            float(sponsor.amount)
+            for sponsor in Sponsor.objects.filter(
+                event_id=event.id
+            )
+        )
+
+        available_funds = (
+            budget_data["budget"]
+            + sponsorship
+        )
+
+        remaining_budget = (
+            available_funds
+            - budget_data["expenses"]
+        )
+
+        if available_funds > 0:
+            budget_utilization = round(
+                (
+                    budget_data["expenses"]
+                    / available_funds
+                ) * 100,
+                2
+            )
+        else:
+            budget_utilization = 0
 
         allocations = Allocation.objects.filter(
             event_id=event.id
@@ -464,9 +567,11 @@ def dashboard_export(request):
             attendance_rate,
             registration_utilization,
             budget_data["budget"],
+            sponsorship,
+            available_funds,
             budget_data["expenses"],
-            budget_data["remaining"],
-            budget_data["utilization"],
+            remaining_budget,
+            budget_utilization,
             resource_text,
             vendor_count
         ])
@@ -486,6 +591,8 @@ def dashboard_overview(request):
     total_present = 0
 
     total_budget = 0
+    total_sponsorship = 0
+    total_available_funds = 0
     total_expenses = 0
 
     total_current_conflicts = 0
@@ -524,7 +631,37 @@ def dashboard_overview(request):
             event.budget
         )
 
+        sponsorship = sum(
+            float(sponsor.amount)
+            for sponsor in Sponsor.objects.filter(
+                event_id=event.id
+            )
+        )
+
+        available_funds = (
+            budget_data["budget"]
+            + sponsorship
+        )
+
+        remaining_budget = (
+            available_funds
+            - budget_data["expenses"]
+        )
+
+        if available_funds > 0:
+            budget_utilization = round(
+                (
+                    budget_data["expenses"]
+                    / available_funds
+                ) * 100,
+                2
+            )
+        else:
+            budget_utilization = 0
+
         total_budget += budget_data["budget"]
+        total_sponsorship += sponsorship
+        total_available_funds += available_funds
         total_expenses += budget_data["expenses"]
 
         budget_conflict = (
@@ -610,9 +747,11 @@ def dashboard_overview(request):
             "attendance_rate": attendance_rate,
 
             "budget": budget_data["budget"],
+            "sponsorship": sponsorship,
+            "available_funds": available_funds,
             "expenses": budget_data["expenses"],
-            "remaining_budget": budget_data["remaining"],
-            "budget_utilization": budget_data["utilization"],
+            "remaining_budget": remaining_budget,
+            "budget_utilization": budget_utilization,
 
             "budget_conflict": budget_conflict,
 
@@ -633,13 +772,21 @@ def dashboard_overview(request):
     else:
         overall_attendance_rate = 0
 
-    if total_budget > 0:
+    if total_available_funds > 0:
         budget_utilization = round(
-            (total_expenses / total_budget) * 100,
+            (
+                total_expenses
+                / total_available_funds
+            ) * 100,
             2
         )
     else:
         budget_utilization = 0
+
+    total_remaining_budget = (
+        total_available_funds
+        - total_expenses
+    )
 
     system_status = (
         "Issues Detected"
@@ -660,8 +807,10 @@ def dashboard_overview(request):
         "overall_attendance_rate": overall_attendance_rate,
 
         "total_budget": total_budget,
+        "total_sponsorship": total_sponsorship,
+        "total_available_funds": total_available_funds,
         "total_expenses": total_expenses,
-        "remaining_budget": total_budget - total_expenses,
+        "remaining_budget": total_remaining_budget,
         "budget_utilization": budget_utilization,
 
         "total_conflicts": total_current_conflicts,

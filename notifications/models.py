@@ -4,6 +4,12 @@ from django.db import models
 class Notification(models.Model):
     event_id = models.IntegerField()
 
+    recipient_email = models.EmailField(
+        max_length=254,
+        null=True,
+        blank=True
+    )
+
     notification_type = models.CharField(
         max_length=50
     )

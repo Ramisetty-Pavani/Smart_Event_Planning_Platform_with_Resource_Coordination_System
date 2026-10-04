@@ -57,11 +57,6 @@ function Navbar({ user, onLogout }) {
     navigate("/change-password");
   };
 
-  const openForgotPassword = () => {
-    setProfileOpen(false);
-    navigate("/forgot-password");
-  };
-
   const handleLogout = () => {
     setProfileOpen(false);
     onLogout();
@@ -167,7 +162,6 @@ function Navbar({ user, onLogout }) {
               Change Password
             </button>
 
-
             <div style={styles.menuDivider} />
 
             <button
@@ -212,6 +206,15 @@ function Navbar({ user, onLogout }) {
         >
           <span>♙</span>
           Registrations
+        </Link>
+
+        {/* Notifications */}
+        <Link
+          to="/notifications"
+          style={linkStyle("/notifications")}
+        >
+          <span>🔔</span>
+          Notifications
         </Link>
 
         {/* Management */}
