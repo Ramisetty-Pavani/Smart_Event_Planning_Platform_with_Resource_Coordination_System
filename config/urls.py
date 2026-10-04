@@ -1,15 +1,12 @@
-"""
-URL configuration for config project.
-
-The `urlpatterns` list routes URLs to views. For more information please see:
-    https://docs.djangoproject.com/en/6.1/topics/http/urls/
-"""
-
 from django.contrib import admin
 from django.urls import path, include
 from registrations.views import scan_attendance
+from .views import home
+
 
 urlpatterns = [
+    path('', home),
+
     path('admin/', admin.site.urls),
 
     path('api/events/', include('events.urls')),
@@ -26,6 +23,5 @@ urlpatterns = [
     path('api/dashboard/', include('dashboard.urls')),
     path('api/accounts/', include('accounts.urls')),
 
-    # Attendance endpoint
     path('api/attendance/', scan_attendance),
 ]
