@@ -242,3 +242,12 @@ CSRF_TRUSTED_ORIGINS = os.environ.get(
     ""
 ).split(",") if os.environ.get("CSRF_TRUSTED_ORIGINS") else []
 
+# ============================================================
+# SESSION / CSRF COOKIE SETTINGS
+# ============================================================
+
+SESSION_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SECURE = not DEBUG
+
+SESSION_COOKIE_SAMESITE = "Lax"
+CSRF_COOKIE_SAMESITE = "Lax"
