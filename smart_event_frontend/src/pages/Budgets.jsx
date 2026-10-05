@@ -1,3 +1,4 @@
+import API_URL from "../api";
 import { useEffect, useMemo, useState } from "react";
 
 function Budgets() {
@@ -25,13 +26,13 @@ function Budgets() {
   const [error, setError] = useState("");
 
   const EVENTS_URL =
-    "http://localhost:8000/api/events/";
+    `${API_URL}/api/events/`;
 
   const BUDGETS_URL =
-    "http://localhost:8000/api/budgets/";
+    `${API_URL}/api/budgets/`;
 
   const EXPENSES_URL =
-    "http://localhost:8000/api/expenses/";
+    `${API_URL}/api/expenses/`;
 
   // =====================================================
   // LOAD INITIAL DATA

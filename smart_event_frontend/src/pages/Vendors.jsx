@@ -1,3 +1,4 @@
+import API_URL from "../api";
 import { useEffect, useMemo, useState } from "react";
 
 function Vendors() {
@@ -20,11 +21,10 @@ function Vendors() {
     status: "Pending",
   });
 
-  const API_URL =
-    "http://localhost:8000/api/vendors/";
+ const VENDORS_URL = `${API_URL}/api/vendors/`;
 
   const EVENTS_URL =
-    "http://localhost:8000/api/events/";
+    `${API_URL}/api/events/`;
 
   useEffect(() => {
     loadData();

@@ -1,3 +1,4 @@
+import API_URL from "../api";
 import { useEffect, useState } from "react";
 
 function Events() {
@@ -28,7 +29,7 @@ function Events() {
   const loadEvents = () => {
     setLoading(true);
 
-   fetch("http://localhost:8000/api/events/", {
+   fetch(`${API_URL}/api/events/`, {
   credentials: "include",
 })
 
@@ -48,7 +49,7 @@ function Events() {
       return;
     }
 
-    fetch("http://localhost:8000/api/registrations/")
+    fetch(`${API_URL}/api/registrations/`)
       .then((response) => response.json())
       .then((data) => {
         setRegistrations(data.registrations || data || []);
@@ -70,58 +71,57 @@ function Events() {
     });
   };
 
-  const createEvent = async (event) => {
-    event.preventDefault();
+ const createEvent = async (event) => {
+  event.preventDefault();
 
-    setMessage("");
+  setMessage("");
 
-    try {
-      const response = await fetch(
-        "http://localhost:8000/api/events/",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            name: form.name,
-            date: form.date,
-            start_time: form.start_time || null,
-            end_time: form.end_time || null,
-            location: form.location,
-            budget: Number(form.budget),
-            capacity: form.capacity
-              ? Number(form.capacity)
-              : null,
-          }),
-        }
-      );
-
-      const data = await response.json();
-
-      if (response.ok) {
-        setMessage("Event created successfully");
-
-        setForm({
-          name: "",
-          date: "",
-          start_time: "",
-          end_time: "",
-          location: "",
-          budget: "",
-          capacity: "",
-        });
-
-        loadEvents();
-      } else {
-        setMessage(
-          data.message || "Could not create event"
-        );
+  try {
+    const response = await fetch(
+      `${API_URL}/api/events/`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        credentials: "include",
+        body: JSON.stringify({
+          name: form.name,
+          date: form.date,
+          start_time: form.start_time || null,
+          end_time: form.end_time || null,
+          location: form.location,
+          budget: Number(form.budget),
+          capacity: form.capacity
+            ? Number(form.capacity)
+            : null,
+        }),
       }
-    } catch (error) {
-      setMessage("Could not connect to Django");
+    );
+
+    const data = await response.json();
+
+    if (response.ok) {
+      setMessage("Event created successfully");
+
+      setForm({
+        name: "",
+        date: "",
+        start_time: "",
+        end_time: "",
+        location: "",
+        budget: "",
+        capacity: "",
+      });
+
+      loadEvents();
+    } else {
+      setMessage(data.message || "Could not create event");
     }
-  };
+  } catch (error) {
+    setMessage("Could not connect to Django");
+  }
+};
 
   const registerForEvent = async (eventId) => {
     if (!user) {
@@ -134,7 +134,7 @@ function Events() {
 
     try {
       const response = await fetch(
-        "http://localhost:8000/api/registrations/",
+        `${API_URL}/api/registrations/`,
         {
           method: "POST",
           headers: {

@@ -1,3 +1,4 @@
+import API_URL from "../api";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -24,7 +25,7 @@ function Profile({ user, onProfileUpdate }) {
   const loadProfile = async () => {
     try {
       const response = await fetch(
-        "http://localhost:8000/api/accounts/profile/",
+        `${API_URL}/api/accounts/profile/`,
         {
           credentials: "include",
         }
@@ -69,7 +70,7 @@ function Profile({ user, onProfileUpdate }) {
 
     try {
       const response = await fetch(
-        "http://localhost:8000/api/accounts/profile/",
+        `${API_URL}/api/accounts/profile/`,
         {
           method: "PUT",
           headers: {

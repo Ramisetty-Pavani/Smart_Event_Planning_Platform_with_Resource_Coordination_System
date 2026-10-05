@@ -1,3 +1,4 @@
+import API_URL from "../api";
 import { useEffect, useState } from "react";
 
 function Registrations() {
@@ -18,7 +19,7 @@ function Registrations() {
   const loadEvents = async () => {
     try {
       const response = await fetch(
-        "http://localhost:8000/api/events/",
+        `${API_URL}/api/events/`,
         {
           credentials: "include",
         }
@@ -40,7 +41,7 @@ function Registrations() {
 
     try {
       const response = await fetch(
-        `http://localhost:8000/api/registrations/?event_id=${eventId}`
+        `${API_URL}/api/registrations/?event_id=${eventId}`
       );
 
       const data = await response.json();
@@ -86,7 +87,7 @@ function Registrations() {
 
     try {
       const response = await fetch(
-        `http://localhost:8000/api/registrations/?event_id=${selectedEvent}`,
+        `${API_URL}/api/registrations/?event_id=${selectedEvent}`,
         {
           method: "POST",
           headers: {
@@ -141,7 +142,7 @@ function Registrations() {
 
     try {
       const response = await fetch(
-        "http://localhost:8000/api/registrations/",
+        `${API_URL}/api/registrations/`,
         {
           method: "PUT",
           headers: {
@@ -659,7 +660,7 @@ function Registrations() {
 
                 <div style={styles.qrContainer}>
                   <img
-                    src={`http://localhost:8000/api/registrations/${qrRegistration.id}/qr/`}
+                    src={`${API_URL}/api/registrations/${qrRegistration.id}/qr/`}
                     alt="Registration QR"
                     style={styles.qrImage}
                   />

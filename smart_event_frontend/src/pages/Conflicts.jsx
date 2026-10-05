@@ -1,13 +1,14 @@
+import API_URL from "../api";
 import { useEffect, useMemo, useState } from "react";
 
 const CONFLICTS_URL =
-  "http://localhost:8000/api/dashboard/conflicts/";
+  `${API_URL}/api/dashboard/conflicts/`;
 
 const EVENTS_URL =
-  "http://localhost:8000/api/events/";
+  `${API_URL}/api/events/`;
 
 const RESOURCES_URL =
-  "http://localhost:8000/api/resources/";
+  `${API_URL}/api/resources/`;
 
 function Conflicts() {
   const [conflicts, setConflicts] = useState([]);

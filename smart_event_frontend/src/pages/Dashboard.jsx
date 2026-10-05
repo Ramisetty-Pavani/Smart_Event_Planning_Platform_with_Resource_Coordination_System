@@ -1,3 +1,4 @@
+import API_URL from "../api";
 import { useEffect, useState } from "react";
 
 const getEventStatus = (event) => {
@@ -49,7 +50,7 @@ function Dashboard({ user }) {
       // --------------------------------
 
       const eventsResponse = await fetch(
-        "http://localhost:8000/api/events/",
+        `${API_URL}/api/events/`,
         {
           credentials: "include",
         }
@@ -71,7 +72,7 @@ function Dashboard({ user }) {
 
       if (isParticipant) {
         const registrationsResponse = await fetch(
-          "http://localhost:8000/api/registrations/",
+          `${API_URL}/api/registrations/`,
           {
             credentials: "include",
           }
@@ -104,7 +105,7 @@ function Dashboard({ user }) {
         // --------------------------------
 
         const dashboardResponse = await fetch(
-          "http://localhost:8000/api/dashboard/",
+          `${API_URL}/api/dashboard/`,
           {
             credentials: "include",
           }
@@ -135,7 +136,7 @@ function Dashboard({ user }) {
   const downloadReport = async () => {
     try {
       const response = await fetch(
-        "http://localhost:8000/api/dashboard/export/",
+        `${API_URL}/api/dashboard/export/`,
         {
           credentials: "include",
         }

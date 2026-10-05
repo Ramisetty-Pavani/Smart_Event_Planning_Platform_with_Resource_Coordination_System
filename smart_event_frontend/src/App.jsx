@@ -1,3 +1,4 @@
+import API_URL from "./api";
 import { useState } from "react";
 import {
   BrowserRouter,
@@ -54,7 +55,7 @@ function App() {
   const handleLogout = async () => {
     try {
       await fetch(
-        "http://127.0.0.1:8000/api/accounts/logout/",
+        `${API_URL}/api/accounts/logout/`,
         {
           method: "POST",
           credentials: "include",

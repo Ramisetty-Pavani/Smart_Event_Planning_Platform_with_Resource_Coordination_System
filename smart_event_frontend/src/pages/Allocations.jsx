@@ -1,3 +1,4 @@
+import API_URL from "../api";
 import { useEffect, useMemo, useState } from "react";
 
 function Allocations() {
@@ -21,7 +22,7 @@ function Allocations() {
   const loadEvents = async () => {
     try {
       const response = await fetch(
-        "http://localhost:8000/api/events/",
+        `${API_URL}/api/events/`,
         {
           credentials: "include",
         }
@@ -42,7 +43,7 @@ function Allocations() {
   const loadResources = async () => {
     try {
       const response = await fetch(
-        "http://localhost:8000/api/resources/",
+        `${API_URL}/api/resources/`,
         {
           credentials: "include",
         }
@@ -67,7 +68,7 @@ function Allocations() {
       setLoading(true);
 
       const response = await fetch(
-        "http://localhost:8000/api/allocations/",
+        `${API_URL}/api/allocations/`,
         {
           credentials: "include",
         }
@@ -144,7 +145,7 @@ function Allocations() {
 
     try {
       const response = await fetch(
-        "http://localhost:8000/api/allocations/",
+        `${API_URL}/api/allocations/`,
         {
           method: "POST",
           credentials: "include",
@@ -202,7 +203,7 @@ function Allocations() {
 
     try {
       const response = await fetch(
-        `http://localhost:8000/api/allocations/${allocationId}/`,
+        `${API_URL}/api/allocations/${allocationId}/`,
         {
           method: "DELETE",
           credentials: "include",

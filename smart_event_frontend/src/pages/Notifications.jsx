@@ -1,3 +1,4 @@
+import API_URL from "../api";
 import { useEffect, useState } from "react";
 
 function Notifications() {
@@ -12,7 +13,7 @@ function Notifications() {
       setError("");
 
       const response = await fetch(
-        "http://localhost:8000/api/notifications/",
+        `${API_URL}/api/notifications/`,
         {
           credentials: "include",
         }
@@ -43,7 +44,7 @@ function Notifications() {
       setUpdatingId(notificationId);
 
       const response = await fetch(
-        "http://localhost:8000/api/notifications/",
+        `${API_URL}/api/notifications/`,
         {
           method: "PUT",
           credentials: "include",

@@ -1,3 +1,4 @@
+import API_URL from "../api";
 import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
@@ -41,7 +42,7 @@ function ResetPassword() {
 
     try {
       const response = await fetch(
-        "http://localhost:8000/api/accounts/reset-password/",
+        `${API_URL}/api/accounts/reset-password/`,
         {
           method: "POST",
           headers: {

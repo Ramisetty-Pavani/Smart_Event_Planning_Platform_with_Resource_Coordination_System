@@ -1,8 +1,9 @@
+import API_URL from "../api";
 import { useEffect, useRef, useState } from "react";
 import { Html5QrcodeScanner } from "html5-qrcode";
 
-const EVENTS_URL = "http://localhost:8000/api/events/";
-const SCAN_URL = "http://localhost:8000/api/attendance/";
+const EVENTS_URL = `${API_URL}/api/events/`;
+const SCAN_URL = `${API_URL}/api/attendance/`;
 
 async function getResponseData(response) {
   const contentType = response.headers.get("content-type") || "";

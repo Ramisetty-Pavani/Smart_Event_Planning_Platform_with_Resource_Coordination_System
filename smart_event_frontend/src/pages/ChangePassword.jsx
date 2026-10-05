@@ -1,3 +1,4 @@
+import API_URL from "../api";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -48,7 +49,7 @@ function ChangePassword() {
 
     try {
       const response = await fetch(
-        "http://localhost:8000/api/accounts/change-password/",
+        `${API_URL}/api/accounts/change-password/`,
         {
           method: "POST",
           headers: {

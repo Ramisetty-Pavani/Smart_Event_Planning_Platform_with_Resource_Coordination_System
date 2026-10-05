@@ -1,3 +1,4 @@
+import API_URL from "../api";
 import { useEffect, useMemo, useState } from "react";
 
 function Resources() {
@@ -20,7 +21,7 @@ function Resources() {
       setError("");
 
       const response = await fetch(
-        "http://localhost:8000/api/resources/",
+        `${API_URL}/api/resources/`,
         {
           credentials: "include",
         }
@@ -68,8 +69,8 @@ function Resources() {
     }
 
     const url = editingId
-      ? `http://localhost:8000/api/resources/${editingId}/`
-      : "http://localhost:8000/api/resources/";
+      ? `${API_URL}/api/resources/${editingId}/`
+      : `${API_URL}/api/resources/`;
 
     const method = editingId ? "PUT" : "POST";
 
@@ -154,7 +155,7 @@ function Resources() {
 
     try {
       const response = await fetch(
-        `http://localhost:8000/api/resources/${resourceId}/`,
+        `${API_URL}/api/resources/${resourceId}/`,
         {
           method: "DELETE",
           credentials: "include",

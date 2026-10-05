@@ -1,10 +1,10 @@
+import API_URL from "../api";
 import { useEffect, useMemo, useState } from "react";
 
-const API_URL =
-  "http://localhost:8000/api/sponsors/";
+const SPONSORS_URL = `${API_URL}/api/sponsors/`;
 
 const EVENTS_URL =
-  "http://localhost:8000/api/events/";
+  `${API_URL}/api/events/`;
 
 function Sponsors() {
   const [sponsors, setSponsors] = useState([]);
