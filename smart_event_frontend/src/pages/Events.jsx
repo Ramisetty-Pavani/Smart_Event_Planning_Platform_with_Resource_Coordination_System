@@ -1,3 +1,4 @@
+
 import API_URL from "../api";
 import { useEffect, useState } from "react";
 
@@ -26,43 +27,87 @@ function Events() {
     capacity: "",
   });
 
-  const loadEvents = () => {
+  // ============================================================
+  // LOAD EVENTS
+  // ============================================================
+
+  const loadEvents = async () => {
     setLoading(true);
 
-   fetch(`${API_URL}/api/events/`, {
-  credentials: "include",
-})
+    try {
+      const response = await fetch(
+        `${API_URL}/api/events/`,
+        {
+          method: "GET",
+          credentials: "include",
+        }
+      );
 
-      .then((response) => response.json())
-      .then((data) => {
-        setEvents(data.events || []);
-        setLoading(false);
-      })
-      .catch(() => {
-        setMessage("Could not load events");
-        setLoading(false);
-      });
+      if (!response.ok) {
+        throw new Error(
+          `Events API returned ${response.status}`
+        );
+      }
+
+      const data = await response.json();
+
+      setEvents(data.events || []);
+      setMessage("");
+    } catch (error) {
+      console.error("Load events error:", error);
+      setMessage("Could not load events");
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const loadRegistrations = () => {
+  // ============================================================
+  // LOAD REGISTRATIONS
+  // ============================================================
+
+  const loadRegistrations = async () => {
     if (!isParticipant) {
       return;
     }
 
-    fetch(`${API_URL}/api/registrations/`)
-      .then((response) => response.json())
-      .then((data) => {
-        setRegistrations(data.registrations || data || []);
-      })
-      .catch(() => {
-        setRegistrations([]);
-      });
+    try {
+      const response = await fetch(
+        `${API_URL}/api/registrations/`,
+        {
+          method: "GET",
+          credentials: "include",
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(
+          `Registrations API returned ${response.status}`
+        );
+      }
+
+      const data = await response.json();
+
+      setRegistrations(
+        data.registrations || data || []
+      );
+    } catch (error) {
+      console.error(
+        "Load registrations error:",
+        error
+      );
+
+      setRegistrations([]);
+    }
   };
 
   useEffect(() => {
     loadEvents();
     loadRegistrations();
   }, []);
+
+  // ============================================================
+  // FORM CHANGE
+  // ============================================================
 
   const handleChange = (event) => {
     setForm({
@@ -71,57 +116,129 @@ function Events() {
     });
   };
 
- const createEvent = async (event) => {
-  event.preventDefault();
+  // ============================================================
+  // CREATE EVENT
+  // ============================================================
 
-  setMessage("");
+  const createEvent = async (event) => {
+    event.preventDefault();
 
-  try {
-    const response = await fetch(
-      `${API_URL}/api/events/`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        credentials: "include",
-        body: JSON.stringify({
-          name: form.name,
-          date: form.date,
-          start_time: form.start_time || null,
-          end_time: form.end_time || null,
-          location: form.location,
-          budget: Number(form.budget),
-          capacity: form.capacity
-            ? Number(form.capacity)
-            : null,
-        }),
+    setMessage("");
+
+    try {
+      const response = await fetch(
+        `${API_URL}/api/events/`,
+        {
+          method: "POST",
+
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+
+          credentials: "include",
+
+          body: JSON.stringify({
+            name: form.name,
+            date: form.date,
+            start_time:
+              form.start_time || null,
+            end_time:
+              form.end_time || null,
+            location: form.location,
+            budget: Number(form.budget),
+            capacity: form.capacity
+              ? Number(form.capacity)
+              : null,
+          }),
+        }
+      );
+
+      // --------------------------------------------------------
+      // Handle authentication redirect
+      // --------------------------------------------------------
+
+      if (response.redirected) {
+        console.error(
+          "Event request was redirected to:",
+          response.url
+        );
+
+        setMessage(
+          "Your login session has expired. Please logout and login again."
+        );
+
+        return;
       }
-    );
 
-    const data = await response.json();
+      // --------------------------------------------------------
+      // Read response safely
+      // --------------------------------------------------------
 
-    if (response.ok) {
-      setMessage("Event created successfully");
+      const contentType =
+        response.headers.get("content-type") || "";
 
-      setForm({
-        name: "",
-        date: "",
-        start_time: "",
-        end_time: "",
-        location: "",
-        budget: "",
-        capacity: "",
-      });
+      let data = {};
 
-      loadEvents();
-    } else {
-      setMessage(data.message || "Could not create event");
+      if (contentType.includes("application/json")) {
+        data = await response.json();
+      } else {
+        const text = await response.text();
+
+        console.error(
+          "Non-JSON response from Events API:",
+          text
+        );
+
+        setMessage(
+          "Django returned an unexpected response."
+        );
+
+        return;
+      }
+
+      // --------------------------------------------------------
+      // Successful creation
+      // --------------------------------------------------------
+
+      if (response.ok) {
+        setMessage(
+          "Event created successfully"
+        );
+
+        setForm({
+          name: "",
+          date: "",
+          start_time: "",
+          end_time: "",
+          location: "",
+          budget: "",
+          capacity: "",
+        });
+
+        await loadEvents();
+      } else {
+        setMessage(
+          data.message ||
+            data.error ||
+            "Could not create event"
+        );
+      }
+    } catch (error) {
+      console.error(
+        "Create event error:",
+        error
+      );
+
+      setMessage(
+        "Could not connect to Django"
+      );
     }
-  } catch (error) {
-    setMessage("Could not connect to Django");
-  }
-};
+  };
+
+  // ============================================================
+  // REGISTER FOR EVENT
+  // ============================================================
 
   const registerForEvent = async (eventId) => {
     if (!user) {
@@ -137,51 +254,86 @@ function Events() {
         `${API_URL}/api/registrations/`,
         {
           method: "POST",
+
           headers: {
             "Content-Type": "application/json",
+            Accept: "application/json",
           },
+
           credentials: "include",
+
           body: JSON.stringify({
             event_id: eventId,
+
             name:
               user.full_name ||
               user.username ||
               "Participant",
+
             email: user.email || "",
+
             phone: user.phone || "",
           }),
         }
       );
 
-      const data = await response.json();
+      if (response.redirected) {
+        setMessage(
+          "Your login session has expired. Please logout and login again."
+        );
+
+        return;
+      }
+
+      const contentType =
+        response.headers.get("content-type") || "";
+
+      let data = {};
+
+      if (contentType.includes("application/json")) {
+        data = await response.json();
+      } else {
+        await response.text();
+
+        setMessage(
+          "Django returned an unexpected response."
+        );
+
+        return;
+      }
 
       if (response.ok) {
         setMessage(
           "Registration completed successfully"
         );
 
-        loadRegistrations();
-        loadEvents();
+        await loadRegistrations();
+        await loadEvents();
       } else {
         setMessage(
           data.message ||
+            data.error ||
             "Could not register for this event"
         );
       }
     } catch (error) {
-      setMessage("Could not connect to Django");
+      console.error(
+        "Registration error:",
+        error
+      );
+
+      setMessage(
+        "Could not connect to Django"
+      );
     } finally {
       setRegistering(null);
     }
   };
 
-  /*
-    Check whether an event has already completed.
+  // ============================================================
+  // CHECK EVENT COMPLETION
+  // ============================================================
 
-    Completed when:
-    1. Event date is before today
-    2. Event is today and its end time has passed
-  */
   const isEventCompleted = (event) => {
     if (!event?.date) {
       return false;
@@ -199,19 +351,18 @@ function Events() {
 
     eventDate.setHours(0, 0, 0, 0);
 
-    // Event date has already passed
     if (eventDate < today) {
       return true;
     }
 
-    // Event is today
     if (
       eventDate.getTime() === today.getTime() &&
       event.end_time
     ) {
-      const [hours, minutes] = event.end_time
-        .split(":")
-        .map(Number);
+      const [hours, minutes] =
+        event.end_time
+          .split(":")
+          .map(Number);
 
       const eventEndTime = new Date();
 
@@ -228,6 +379,10 @@ function Events() {
     return false;
   };
 
+  // ============================================================
+  // CHECK REGISTRATION
+  // ============================================================
+
   const isRegistered = (eventId) => {
     return registrations.some(
       (registration) =>
@@ -237,33 +392,49 @@ function Events() {
     );
   };
 
-  const filteredEvents = events.filter((event) => {
-    const searchText = search.toLowerCase();
+  // ============================================================
+  // SEARCH
+  // ============================================================
 
-    return (
-      event.name
-        ?.toLowerCase()
-        .includes(searchText) ||
-      event.location
-        ?.toLowerCase()
-        .includes(searchText) ||
-      event.date
-        ?.toLowerCase()
-        .includes(searchText)
-    );
-  });
+  const filteredEvents = events.filter(
+    (event) => {
+      const searchText =
+        search.toLowerCase();
+
+      return (
+        event.name
+          ?.toLowerCase()
+          .includes(searchText) ||
+        event.location
+          ?.toLowerCase()
+          .includes(searchText) ||
+        event.date
+          ?.toLowerCase()
+          .includes(searchText)
+      );
+    }
+  );
+
+  // ============================================================
+  // FORMAT BUDGET
+  // ============================================================
 
   const formatBudget = (budget) => {
-    return Number(budget || 0).toLocaleString(
-      "en-IN"
-    );
+    return Number(
+      budget || 0
+    ).toLocaleString("en-IN");
   };
+
+  // ============================================================
+  // UI
+  // ============================================================
 
   return (
     <div style={styles.page}>
       <div style={styles.container}>
 
         {/* Page Header */}
+
         <div style={styles.header}>
           <div>
             <p style={styles.smallHeading}>
@@ -290,15 +461,12 @@ function Events() {
           <div style={styles.eventCount}>
             <strong>{events.length}</strong>
 
-            <span>
-              {isParticipant
-                ? "Total Events"
-                : "Total Events"}
-            </span>
+            <span>Total Events</span>
           </div>
         </div>
 
-        {/* Create Event Section - Admin/Organizer only */}
+        {/* Create Event Section */}
+
         {!isParticipant && !isStaff && (
           <div style={styles.formCard}>
             <div style={styles.sectionHeader}>
@@ -307,7 +475,11 @@ function Events() {
                   Create New Event
                 </h2>
 
-                <p style={styles.sectionSubtitle}>
+                <p
+                  style={
+                    styles.sectionSubtitle
+                  }
+                >
                   Enter the event details below.
                 </p>
               </div>
@@ -321,6 +493,7 @@ function Events() {
               <div style={styles.formGrid}>
 
                 {/* Event Name */}
+
                 <div style={styles.inputGroup}>
                   <label style={styles.label}>
                     Event Name
@@ -337,6 +510,7 @@ function Events() {
                 </div>
 
                 {/* Date */}
+
                 <div style={styles.inputGroup}>
                   <label style={styles.label}>
                     Event Date
@@ -353,6 +527,7 @@ function Events() {
                 </div>
 
                 {/* Start Time */}
+
                 <div style={styles.inputGroup}>
                   <label style={styles.label}>
                     Start Time
@@ -368,6 +543,7 @@ function Events() {
                 </div>
 
                 {/* End Time */}
+
                 <div style={styles.inputGroup}>
                   <label style={styles.label}>
                     End Time
@@ -383,6 +559,7 @@ function Events() {
                 </div>
 
                 {/* Location */}
+
                 <div style={styles.inputGroup}>
                   <label style={styles.label}>
                     Location
@@ -399,6 +576,7 @@ function Events() {
                 </div>
 
                 {/* Budget */}
+
                 <div style={styles.inputGroup}>
                   <label style={styles.label}>
                     Budget
@@ -429,6 +607,7 @@ function Events() {
                 </div>
 
                 {/* Capacity */}
+
                 <div style={styles.inputGroup}>
                   <label style={styles.label}>
                     Capacity
@@ -464,16 +643,20 @@ function Events() {
               <div
                 style={{
                   ...styles.message,
-                  background: message.includes(
-                    "successfully"
-                  )
-                    ? "#dcfce7"
-                    : "#fee2e2",
-                  color: message.includes(
-                    "successfully"
-                  )
-                    ? "#166534"
-                    : "#991b1b",
+
+                  background:
+                    message.includes(
+                      "successfully"
+                    )
+                      ? "#dcfce7"
+                      : "#fee2e2",
+
+                  color:
+                    message.includes(
+                      "successfully"
+                    )
+                      ? "#166534"
+                      : "#991b1b",
                 }}
               >
                 {message}
@@ -483,21 +666,26 @@ function Events() {
         )}
 
         {/* Participant / Staff message */}
+
         {(isParticipant || isStaff) &&
           message && (
             <div
               style={{
                 ...styles.message,
-                background: message.includes(
-                  "successfully"
-                )
-                  ? "#dcfce7"
-                  : "#fee2e2",
-                color: message.includes(
-                  "successfully"
-                )
-                  ? "#166534"
-                  : "#991b1b",
+
+                background:
+                  message.includes(
+                    "successfully"
+                  )
+                    ? "#dcfce7"
+                    : "#fee2e2",
+
+                color:
+                  message.includes(
+                    "successfully"
+                  )
+                    ? "#166534"
+                    : "#991b1b",
               }}
             >
               {message}
@@ -505,6 +693,7 @@ function Events() {
           )}
 
         {/* Events List */}
+
         <div style={styles.eventsSection}>
 
           <div style={styles.eventsHeader}>
@@ -515,7 +704,11 @@ function Events() {
                   : "All Events"}
               </h2>
 
-              <p style={styles.sectionSubtitle}>
+              <p
+                style={
+                  styles.sectionSubtitle
+                }
+              >
                 {isParticipant
                   ? "View event details and register for an event."
                   : isStaff
@@ -525,6 +718,7 @@ function Events() {
             </div>
 
             {/* Search */}
+
             <div style={styles.searchContainer}>
               <span style={styles.searchIcon}>
                 ⌕
@@ -543,6 +737,7 @@ function Events() {
           </div>
 
           {/* Loading */}
+
           {loading && (
             <div style={styles.emptyState}>
               <div style={styles.spinner}></div>
@@ -552,6 +747,7 @@ function Events() {
           )}
 
           {/* No Events */}
+
           {!loading &&
             filteredEvents.length === 0 && (
               <div style={styles.emptyState}>
@@ -576,6 +772,7 @@ function Events() {
             )}
 
           {/* Event Cards */}
+
           {!loading &&
             filteredEvents.length > 0 && (
               <div style={styles.eventGrid}>
@@ -590,7 +787,6 @@ function Events() {
                       style={styles.eventCard}
                     >
 
-                      {/* Card Header */}
                       <div style={styles.cardTop}>
 
                         <div
@@ -604,31 +800,34 @@ function Events() {
                         <span
                           style={{
                             ...styles.activeBadge,
-                            background: completed
-                              ? "#e2e8f0"
-                              : "#dcfce7",
-                            color: completed
-                              ? "#475569"
-                              : "#166534",
+
+                            background:
+                              completed
+                                ? "#e2e8f0"
+                                : "#dcfce7",
+
+                            color:
+                              completed
+                                ? "#475569"
+                                : "#166534",
                           }}
                         >
                           {completed
                             ? "Completed"
                             : "Available"}
                         </span>
-
                       </div>
 
-                      {/* Event Name */}
                       <h3 style={styles.eventName}>
                         {event.name}
                       </h3>
 
-                      {/* Details */}
                       <div style={styles.details}>
 
                         <div
-                          style={styles.detailRow}
+                          style={
+                            styles.detailRow
+                          }
                         >
                           <span
                             style={
@@ -658,7 +857,9 @@ function Events() {
                         </div>
 
                         <div
-                          style={styles.detailRow}
+                          style={
+                            styles.detailRow
+                          }
                         >
                           <span
                             style={
@@ -692,7 +893,9 @@ function Events() {
                         </div>
 
                         <div
-                          style={styles.detailRow}
+                          style={
+                            styles.detailRow
+                          }
                         >
                           <span
                             style={
@@ -723,7 +926,8 @@ function Events() {
 
                       </div>
 
-                      {/* Participant Information */}
+                      {/* Participant */}
+
                       {isParticipant && (
                         <div
                           style={
@@ -756,7 +960,8 @@ function Events() {
                                 ...styles.registerButton,
                                 background:
                                   "#f1f5f9",
-                                color: "#64748b",
+                                color:
+                                  "#64748b",
                               }}
                             >
                               Completed
@@ -777,18 +982,21 @@ function Events() {
                               }
                               style={{
                                 ...styles.registerButton,
+
                                 background:
                                   isRegistered(
                                     event.id
                                   )
                                     ? "#dcfce7"
                                     : "#2563eb",
+
                                 color:
                                   isRegistered(
                                     event.id
                                   )
                                     ? "#166534"
                                     : "#ffffff",
+
                                 cursor:
                                   isRegistered(
                                     event.id
@@ -813,10 +1021,13 @@ function Events() {
                         </div>
                       )}
 
-                      {/* Staff Information */}
+                      {/* Staff */}
+
                       {isStaff && (
                         <div
-                          style={styles.cardFooter}
+                          style={
+                            styles.cardFooter
+                          }
                         >
                           <div>
                             <span
@@ -839,7 +1050,8 @@ function Events() {
                         </div>
                       )}
 
-                      {/* Admin / Organizer Information */}
+                      {/* Admin / Organizer */}
+
                       {!isParticipant &&
                         !isStaff && (
                           <div
@@ -907,6 +1119,10 @@ function Events() {
     </div>
   );
 }
+
+// ============================================================
+// STYLES
+// ============================================================
 
 const styles = {
   page: {
