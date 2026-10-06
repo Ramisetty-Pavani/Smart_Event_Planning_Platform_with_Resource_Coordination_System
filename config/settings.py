@@ -245,9 +245,8 @@ CSRF_TRUSTED_ORIGINS = os.environ.get(
 # ============================================================
 # SESSION / CSRF COOKIE SETTINGS
 # ============================================================
+SESSION_COOKIE_SECURE = True
+CSRF_COOKIE_SECURE = True
 
-SESSION_COOKIE_SECURE = not DEBUG
-CSRF_COOKIE_SECURE = not DEBUG
-
-SESSION_COOKIE_SAMESITE = "Lax"
-CSRF_COOKIE_SAMESITE = "Lax"
+SESSION_COOKIE_SAMESITE = "None"
+CSRF_COOKIE_SAMESITE = "None"
